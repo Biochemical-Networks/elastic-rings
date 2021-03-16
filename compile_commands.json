@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/home/alexc/projects/anillin-actin/src/elastic-rings/build",
+  "command": "/usr/bin/c++ -DBOOST_NO_AUTO_PTR -DDEBUG -I/home/alexc/projects/anillin-actin/src/elastic-rings/include -isystem /usr/include/opencascade -pedantic -fPIC -Wall -Wextra -Woverloaded-virtual -Wpointer-arith -Wsign-compare -Wswitch -Wsynth -Wwrite-strings -Wno-placement-new -Wno-literal-suffix -Wno-psabi -Wno-class-memaccess -fopenmp-simd -std=c++17 -march=x86-64 -mtune=generic -O2 -pipe -fno-plt -Wno-unknown-pragmas -pthread -Wno-unused-local-typedefs -O0 -ggdb -Wa,--compress-debug-sections -o CMakeFiles/solve-ring_nonlinear.dir/src/solve-ring_nonlinear.cpp.o -c /home/alexc/projects/anillin-actin/src/elastic-rings/src/solve-ring_nonlinear.cpp",
+  "file": "/home/alexc/projects/anillin-actin/src/elastic-rings/src/solve-ring_nonlinear.cpp"
+}
+]

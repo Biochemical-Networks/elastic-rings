@@ -8,6 +8,7 @@
 
 #include <deal.II/base/function.h>
 #include <deal.II/base/logstream.h>
+#include <deal.II/base/parameter_handler.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/utilities.h>
 
@@ -47,10 +48,132 @@
 
 using namespace dealii;
 
+struct Params {
+    unsigned int refinements;
+    double length;
+    double width;
+    double E;
+    double nu;
+    bool load_from_checkpoint;
+    std::string input_prefix;
+    std::string input_checkpoint;
+    std::string output_prefix;
+
+    Params();
+    static void declare_parameters(ParameterHandler& prm);
+    void parse_parameters(ParameterHandler& prm);
+};
+
+Params::Params() {
+    ParameterHandler prm;
+    declare_parameters(prm);
+    prm.parse_input(std::cin);
+    parse_parameters(prm);
+}
+
+void Params::declare_parameters(ParameterHandler& prm) {
+    prm.enter_subsection("Mesh and geometry");
+    {
+        prm.declare_entry(
+                "Number of refinements",
+                "2",
+                Patterns::Integer(0),
+                "Number of global mesh refinement steps "
+                "applied to initial coarse grid");
+        prm.declare_entry(
+                "length", "20", Patterns::Double(0), "Length of beam");
+        prm.declare_entry("width", "2", Patterns::Double(0), "Width of beam");
+    }
+    prm.leave_subsection();
+
+    prm.enter_subsection("Physical constants");
+    {
+        prm.declare_entry(
+                "Young's modulus", "2.2e7", Patterns::Double(0), "Young's modulus");
+        prm.declare_entry(
+                "Poisson's ratio", "0.3", Patterns::Double(0), "Poisson's ratio");
+    }
+    prm.leave_subsection();
+
+    prm.enter_subsection("Input and output");
+    {
+        prm.declare_entry(
+                "Load from checkpoint",
+                "false",
+                Patterns::Bool(),
+                "Begin calculation from a checkpoint");
+        prm.declare_entry(
+                "Input filename prefix",
+                "",
+                Patterns::Anything(),
+                "Prefix of the output filename");
+        prm.declare_entry(
+                "Input checkpoint",
+                "",
+                Patterns::Anything(),
+                "Checkpoint of the input file");
+        prm.declare_entry(
+                "Output filename prefix",
+                "",
+                Patterns::Anything(),
+                "Prefix of the output filename");
+    }
+    prm.leave_subsection();
+}
+
+void Params::parse_parameters(ParameterHandler& prm) {
+    prm.enter_subsection("Mesh and geometry");
+    {
+        refinements = prm.get_integer("Number of refinements");
+        length = prm.get_double("length");
+        width = prm.get_double("width");
+    }
+    prm.leave_subsection();
+    prm.enter_subsection("Physical constants");
+    {
+        E = prm.get_double("Young's modulus");
+        nu = prm.get_double("Poisson's ratio");
+    }
+    prm.leave_subsection();
+    prm.enter_subsection("Input and output");
+    {
+        load_from_checkpoint = prm.get_bool("Load from checkpoint");
+        input_prefix = prm.get("Input filename prefix");
+        input_checkpoint = prm.get("Input checkpoint");
+        output_prefix = prm.get("Output filename prefix");
+    }
+    prm.leave_subsection();
+}
+
+template <int dim>
+class BoundaryValues: public Function<dim> {
+  public:
+    BoundaryValues(double gamma, unsigned int comps);
+    void vector_value(const Point<dim>& p, Vector<double>& values)
+            const override;
+
+  private:
+    double gamma;
+};
+
+template <int dim>
+BoundaryValues<dim>::BoundaryValues(double gamma, unsigned int comps):
+        gamma {gamma}, Function<dim> {comps} {}
+
+template <int dim>
+void BoundaryValues<dim>::vector_value(
+        const Point<dim>& p,
+        Vector<double>& values) const {
+
+    values[0] = gamma * (p[0] * (2 / numbers::PI - 1) + p[1]);
+    values[1] = gamma * (-2 * p[0] / numbers::PI - p[1]);
+    values[2] = 0;
+}
+
 template <int dim>
 class SolveRing {
   public:
-    SolveRing(double length, double width, double E, double nu);
+    SolveRing(Params& prms);
     void run();
 
   private:
@@ -94,67 +217,34 @@ class SolveRing {
             face_pairs;
     std::vector<double> gamma;
 
-    double length;
-    double width;
-    double E;
-    double nu;
+    Params& prms;
     double lambda;
     double mu;
 };
 
 template <int dim>
-class BoundaryValues: public Function<dim> {
-  public:
-    BoundaryValues(double gamma, unsigned int comps);
-    void vector_value(const Point<dim>& p, Vector<double>& values)
-            const override;
-
-  private:
-    double gamma;
-};
-
-template <int dim>
-BoundaryValues<dim>::BoundaryValues(double gamma, unsigned int comps):
-        gamma {gamma}, Function<dim> {comps} {}
-
-template <int dim>
-void BoundaryValues<dim>::vector_value(
-        const Point<dim>& p,
-        Vector<double>& values) const {
-
-    values[0] = gamma * (p[0] * (2 / numbers::PI - 1) + p[1]);
-    values[1] = gamma * (-2 * p[0] / numbers::PI - p[1]);
-    values[2] = 0;
-}
-
-template <int dim>
-SolveRing<dim>::SolveRing(double length, double width, double E, double nu):
-        fe(FE_Q<dim>(1), dim),
-        dof_handler(triangulation),
-        length {length},
-        width {width},
-        E {E},
-        nu {nu} {
-    mu = E / (2 * (1 + nu));
-    lambda = E * nu / ((1 + nu) * (1 - 2 * nu));
+SolveRing<dim>::SolveRing(Params& prms):
+        fe(FE_Q<dim>(1), dim), dof_handler(triangulation), prms {prms} {
+    mu = prms.E / (2 * (1 + prms.nu));
+    lambda = prms.E * prms.nu / ((1 + prms.nu) * (1 - 2 * prms.nu));
 }
 
 template <int dim>
 void SolveRing<dim>::make_grid() {
     const Point<dim>& origin {0, 0, 0};
-    const Point<dim>& size {length, width, width};
+    const Point<dim>& size {prms.length, prms.width, prms.width};
     GridGenerator::hyper_rectangle(triangulation, origin, size);
     for (auto& face: triangulation.active_face_iterators()) {
-        if (std::fabs(face->center()(1) - width / 2) < 1e-12) {
+        if (std::fabs(face->center()(1) - prms.width / 2) < 1e-12) {
             if (std::fabs(face->center()(0)) < 1e-12) {
                 face->set_boundary_id(1);
             }
-            else if (std::fabs(face->center()(0) - length) < 1e-12) {
+            else if (std::fabs(face->center()(0) - prms.length) < 1e-12) {
                 face->set_boundary_id(2);
             }
         }
     }
-    triangulation.refine_global(2);
+    triangulation.refine_global(prms.refinements);
 }
 
 template <int dim>
@@ -407,16 +497,18 @@ void SolveRing<dim>::output_grid() const {
 
 template <int dim>
 void SolveRing<dim>::output_checkpoint(const std::string checkpoint) const {
-    std::ofstream solution_out {"outs/solution_" + checkpoint + ".txt"};
+    std::ofstream solution_out {
+            prms.output_prefix + "_displacement" + checkpoint + ".ar"};
     boost::archive::text_oarchive solution_ar {solution_out};
     present_solution.save(solution_ar, 0);
 
     std::ofstream triangulation_out {
-            "outs/triangulation_" + checkpoint + ".txt"};
+            prms.output_prefix + "_triangulation_" + checkpoint + ".ar"};
     boost::archive::text_oarchive triangulation_ar {triangulation_out};
     triangulation.save(triangulation_ar, 0);
 
-    std::ofstream dof_handler_out {"outs/dof_handler_" + checkpoint + ".txt"};
+    std::ofstream dof_handler_out {
+            prms.output_prefix + "_dof_handler_" + checkpoint + ".ar"};
     boost::archive::text_oarchive dof_handler_ar {dof_handler_out};
     dof_handler.save(dof_handler_ar, 0);
 }
@@ -436,23 +528,26 @@ void SolveRing<dim>::output_results(const std::string checkpoint) const {
             DataOut<dim>::type_dof_data,
             data_component_interpretation);
     data_out.build_patches();
-    std::ofstream data_output("outs/solution_" + checkpoint + ".vtk");
+    std::ofstream data_output(
+            prms.output_prefix + "_displacement_" + checkpoint + ".vtk");
     data_out.write_vtk(data_output);
 }
 
 template <int dim>
 void SolveRing<dim>::load_checkpoint(const std::string checkpoint) {
-    std::ifstream solution_inp {"outs/solution_" + checkpoint + ".txt"};
+    std::ifstream solution_inp {
+            prms.input_prefix + "_displacement_" + checkpoint + ".ar"};
     boost::archive::text_iarchive solution_ar {solution_inp};
     present_solution.load(solution_ar, 0);
 
     std::ifstream triangulation_inp {
-            "outs/triangulation_" + checkpoint + ".txt"};
+            prms.input_prefix + "_triangulation_" + checkpoint + ".ar"};
     boost::archive::text_iarchive triangulation_ar {triangulation_inp};
     triangulation.load(triangulation_ar, 0);
 
     dof_handler.distribute_dofs(fe);
-    std::ifstream dof_handler_inp {"outs/dof_handler_" + checkpoint + ".txt"};
+    std::ifstream dof_handler_inp {
+            prms.input_prefix + "_dof_handler_" + checkpoint + ".ar"};
     boost::archive::text_iarchive dof_handler_ar {dof_handler_inp};
     dof_handler.load(dof_handler_ar, 0);
 
@@ -466,8 +561,12 @@ void SolveRing<dim>::run() {
     output_grid();
     int num_gamma_iters {1};
     std::string checkpoint;
-    //initiate_system();
-    load_checkpoint("final");
+    if (prms.load_from_checkpoint) {
+        load_checkpoint(prms.input_checkpoint);
+    }
+    else {
+        initiate_system();
+    }
     setup_constraints();
     bool first_step {true};
     for (auto i {0}; i != num_gamma_iters; i++) {
@@ -489,13 +588,14 @@ void SolveRing<dim>::run() {
         first_step = false;
     }
     checkpoint = "final";
-    //output_checkpoint(checkpoint);
-    //output_results(checkpoint);
+    // output_checkpoint(checkpoint);
+    // output_results(checkpoint);
 }
 
 int main() {
     deallog.depth_console(0);
-    SolveRing<3> ring_solver {20, 2, 2.2e7, 0.3};
+    Params prms {};
+    SolveRing<3> ring_solver {prms};
     ring_solver.run();
 
     return 0;

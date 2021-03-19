@@ -9,6 +9,7 @@
 #include <deal.II/base/function.h>
 #include <deal.II/base/logstream.h>
 #include <deal.II/base/parameter_handler.h>
+#include <deal.II/base/parsed_function.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/utilities.h>
 
@@ -48,12 +49,28 @@
 
 using namespace dealii;
 
+template <int dim>
 struct Params {
     unsigned int refinements;
     double length;
     double width;
+    unsigned int num_boundary_stages;
+    unsigned int starting_stage;
+    unsigned int num_gamma_iters;
+
+    // There is probably a better way to do this
+    static const unsigned int max_stages {5};
+    std::vector<std::shared_ptr<Functions::ParsedFunction<dim>>>
+            boundary_functions;
     double E;
     double nu;
+    unsigned int max_n_line_searches;
+    double alpha_factor;
+    double min_alpha;
+    double alpha_check_factor;
+    double nonlinear_tol;
+    unsigned int max_linear_iters;
+    double linear_tol;
     bool load_from_checkpoint;
     std::string input_prefix;
     std::string input_checkpoint;
@@ -64,14 +81,20 @@ struct Params {
     void parse_parameters(ParameterHandler& prm);
 };
 
-Params::Params() {
+template <int dim>
+Params<dim>::Params() {
+    for (unsigned int i {0}; i != max_stages; i++) {
+        boundary_functions.push_back(
+                std::make_shared<Functions::ParsedFunction<dim>>(dim));
+    }
     ParameterHandler prm;
     declare_parameters(prm);
     prm.parse_input(std::cin);
     parse_parameters(prm);
 }
 
-void Params::declare_parameters(ParameterHandler& prm) {
+template <int dim>
+void Params<dim>::declare_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
         prm.declare_entry(
@@ -86,12 +109,85 @@ void Params::declare_parameters(ParameterHandler& prm) {
     }
     prm.leave_subsection();
 
+    prm.enter_subsection("Boundary conditions");
+    {
+        prm.declare_entry(
+                "Number of boundary stages",
+                "1",
+                Patterns::Integer(1),
+                "Number of boundary stages");
+        prm.declare_entry(
+                "Starting stage",
+                "0",
+                Patterns::Integer(0),
+                "Boundary stage to start calculations on");
+        prm.declare_entry(
+                "Number of boundary increments",
+                "1",
+                Patterns::Integer(1),
+                "Number of boundary increments");
+    }
+    prm.leave_subsection();
+
+    for (unsigned int i {0}; i != max_stages + 1; i++) {
+        prm.enter_subsection("Boundary function stage " + std::to_string(i));
+        { Functions::ParsedFunction<dim>::declare_parameters(prm, dim); }
+        prm.leave_subsection();
+    }
+
     prm.enter_subsection("Physical constants");
     {
         prm.declare_entry(
-                "Young's modulus", "2.2e7", Patterns::Double(0), "Young's modulus");
+                "Young's modulus",
+                "2.2e7",
+                Patterns::Double(0),
+                "Young's modulus");
         prm.declare_entry(
-                "Poisson's ratio", "0.3", Patterns::Double(0), "Poisson's ratio");
+                "Poisson's ratio",
+                "0.3",
+                Patterns::Double(0),
+                "Poisson's ratio");
+    }
+    prm.leave_subsection();
+
+    prm.enter_subsection("Solver");
+    {
+        prm.declare_entry(
+                "Maximum number of line searches",
+                "10",
+                Patterns::Integer(0),
+                "Maximum number of line searches");
+        prm.declare_entry(
+                "Minimum alpha",
+                "1e-5",
+                Patterns::Double(0),
+                "Smallest alpha to try before moving on");
+        prm.declare_entry(
+                "Alpha factor",
+                "0.5",
+                Patterns::Double(0),
+                "Factor to multiply alpha by when trying smaller step");
+        prm.declare_entry(
+                "Alpha check factor",
+                "0.5",
+                Patterns::Double(0),
+                "Larger values require bigger residual decrease for acceptable "
+                "alpha");
+        prm.declare_entry(
+                "Nonlinear tolerance",
+                "1e-12",
+                Patterns::Double(0),
+                "Tolerance for nonlinear solver");
+        prm.declare_entry(
+                "Maximum number of linear solver iterations",
+                "10000",
+                Patterns::Integer(1),
+                "Maximum number of linear solver iterations");
+        prm.declare_entry(
+                "Linear tolerance",
+                "1e-12",
+                Patterns::Double(0),
+                "Tolerance for linear solver");
     }
     prm.leave_subsection();
 
@@ -121,7 +217,8 @@ void Params::declare_parameters(ParameterHandler& prm) {
     prm.leave_subsection();
 }
 
-void Params::parse_parameters(ParameterHandler& prm) {
+template <int dim>
+void Params<dim>::parse_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
         refinements = prm.get_integer("Number of refinements");
@@ -129,12 +226,42 @@ void Params::parse_parameters(ParameterHandler& prm) {
         width = prm.get_double("width");
     }
     prm.leave_subsection();
+
+    prm.enter_subsection("Boundary conditions");
+    {
+        num_boundary_stages = prm.get_integer("Number of boundary stages");
+        starting_stage = prm.get_integer("Starting stage");
+        num_gamma_iters = prm.get_integer("Number of boundary increments");
+    }
+    prm.leave_subsection();
+
+    for (unsigned int i {0}; i != num_boundary_stages + 1; i++) {
+        prm.enter_subsection("Boundary function stage " + std::to_string(i));
+        boundary_functions[i]->parse_parameters(prm);
+        prm.leave_subsection();
+    }
+
     prm.enter_subsection("Physical constants");
     {
         E = prm.get_double("Young's modulus");
         nu = prm.get_double("Poisson's ratio");
     }
     prm.leave_subsection();
+
+    prm.enter_subsection("Solver");
+    {
+        max_n_line_searches =
+                prm.get_integer("Maximum number of line searches");
+        alpha_factor = prm.get_double("Alpha factor");
+        alpha_check_factor = prm.get_double("Alpha check factor");
+        min_alpha = prm.get_double("Minimum alpha");
+        nonlinear_tol = prm.get_double("Nonlinear tolerance");
+        max_linear_iters =
+                prm.get_integer("Maximum number of linear solver iterations");
+        linear_tol = prm.get_double("Linear tolerance");
+    }
+    prm.leave_subsection();
+
     prm.enter_subsection("Input and output");
     {
         load_from_checkpoint = prm.get_bool("Load from checkpoint");
@@ -143,6 +270,35 @@ void Params::parse_parameters(ParameterHandler& prm) {
         output_prefix = prm.get("Output filename prefix");
     }
     prm.leave_subsection();
+}
+
+template <int dim>
+class ComposedFunction: public Function<dim> {
+  public:
+    ComposedFunction();
+    void vector_value(const Point<dim>& p, Vector<double>& values)
+            const override;
+    std::shared_ptr<Function<dim>> f1;
+    std::shared_ptr<Function<dim>> f2;
+    double gamma {1};
+};
+
+template <int dim>
+ComposedFunction<dim>::ComposedFunction() {
+    f1 = std::make_shared<Functions::ZeroFunction<dim>>(3);
+    f2 = std::make_shared<Functions::ZeroFunction<dim>>(3);
+}
+
+template <int dim>
+void ComposedFunction<dim>::vector_value(
+        const Point<dim>& p,
+        Vector<double>& values) const {
+
+    Vector<double> values_1(3);
+    f1->vector_value(p, values_1);
+    Vector<double> values_2(3);
+    f2->vector_value(p, values_2);
+    values.add(1 - gamma, values_1, gamma, values_2);
 }
 
 template <int dim>
@@ -173,7 +329,7 @@ void BoundaryValues<dim>::vector_value(
 template <int dim>
 class SolveRing {
   public:
-    SolveRing(Params& prms);
+    SolveRing(Params<dim>& prms);
     void run();
 
   private:
@@ -196,12 +352,17 @@ class SolveRing {
     void output_checkpoint(const std::string checkpoint) const;
     void output_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
+    std::string format_gamma(const double gamma);
+    void update_boundary_function_gamma();
+    void update_boundary_function_stage(unsigned int stage_i);
 
     Triangulation<dim> triangulation;
     FESystem<dim> fe;
     DoFHandler<dim> dof_handler;
     AffineConstraints<double> zero_constraints;
     AffineConstraints<double> nonzero_constraints;
+    Functions::ZeroFunction<dim> zero_function;
+    ComposedFunction<dim> boundary_function;
 
     SparsityPattern sparsity_pattern;
     SparseMatrix<double> system_matrix;
@@ -215,16 +376,19 @@ class SolveRing {
     std::vector<GridTools::PeriodicFacePair<
             typename DoFHandler<dim, dim>::cell_iterator>>
             face_pairs;
-    std::vector<double> gamma;
+    double gamma;
 
-    Params& prms;
+    Params<dim>& prms;
     double lambda;
     double mu;
 };
 
 template <int dim>
-SolveRing<dim>::SolveRing(Params& prms):
-        fe(FE_Q<dim>(1), dim), dof_handler(triangulation), prms {prms} {
+SolveRing<dim>::SolveRing(Params<dim>& prms):
+        fe(FE_Q<dim>(1), dim),
+        dof_handler(triangulation),
+        zero_function {3},
+        prms {prms} {
     mu = prms.E / (2 * (1 + prms.nu));
     lambda = prms.E * prms.nu / ((1 + prms.nu) * (1 - 2 * prms.nu));
 }
@@ -263,9 +427,18 @@ void SolveRing<dim>::setup_constraints() {
             mapping, dof_handler, dofs_to_supports);
     collect_periodic_faces(dof_handler, 1, 2, 0, face_pairs);
 
+    update_boundary_function_stage(prms.starting_stage);
+    nonzero_constraints.clear();
+    make_periodicity_constraints<dim, dim, double>(
+            face_pairs,
+            nonzero_constraints,
+            dofs_to_supports,
+            boundary_function);
+    nonzero_constraints.close();
+
     zero_constraints.clear();
     make_periodicity_constraints<dim, dim, double>(
-            face_pairs, zero_constraints, dofs_to_supports, {0.0, 0.0, 0.0});
+            face_pairs, zero_constraints, dofs_to_supports, zero_function);
     // VectorTools::interpolate_boundary_values(
     //        dof_handler, 1, Functions::ZeroFunction<dim>(3),
     //        zero_constraints);
@@ -280,9 +453,13 @@ void SolveRing<dim>::setup_constraints() {
 
 template <int dim>
 void SolveRing<dim>::update_constraints() {
+    update_boundary_function_gamma();
     nonzero_constraints.clear();
     make_periodicity_constraints<dim, dim, double>(
-            face_pairs, nonzero_constraints, dofs_to_supports, gamma);
+            face_pairs,
+            nonzero_constraints,
+            dofs_to_supports,
+            boundary_function);
     /*VectorTools::interpolate_boundary_values(
             dof_handler,
             1,
@@ -406,10 +583,10 @@ template <int dim>
 void SolveRing<dim>::solve(const bool initial_step) {
     const AffineConstraints<double>& constraints_used =
             initial_step ? nonzero_constraints : zero_constraints;
-    SolverControl solver_control(10000, 1e-12);
+    SolverControl solver_control(prms.max_linear_iters, prms.linear_tol);
     SolverGMRES<Vector<double>> solver(solver_control);
     PreconditionJacobi<SparseMatrix<double>> preconditioner;
-    preconditioner.initialize(system_matrix, 1.0);
+    preconditioner.initialize(system_matrix, 1.2);
     // SolverCG<Vector<double>> solver(solver_control);
     // PreconditionSSOR<SparseMatrix<double>> preconditioner;
     // preconditioner.initialize(system_matrix, 1.2);
@@ -436,17 +613,17 @@ void SolveRing<dim>::newton_iteration(
         bool first_step,
         const std::string checkpoint) {
 
+    bool boundary_updated {!first_step};
     unsigned int line_search_n = 0;
     double last_res = 1.0;
     double current_res = 1.0;
 
-    first_step = false;
     while ((first_step or (current_res > tolerance)) and
            line_search_n < max_n_line_searches) {
         if (first_step) {
-            newton_update = present_solution;
             evaluation_point = present_solution;
-            assemble_system(false);
+            assemble_system(first_step);
+            newton_update = present_solution;
             solve(first_step);
             present_solution = newton_update;
             nonzero_constraints.distribute(present_solution);
@@ -457,13 +634,13 @@ void SolveRing<dim>::newton_iteration(
             std::cout << "The residual of initial guess is " << current_res
                       << std::endl;
             last_res = current_res;
-            output_results("test1");
         }
         else {
             evaluation_point = present_solution;
             assemble_system(first_step);
             solve(first_step);
-            for (double alpha {1.0}; alpha > 1e-5; alpha *= 0.5) {
+            for (double alpha {1.0}; alpha > prms.min_alpha;
+                 alpha *= prms.alpha_factor) {
                 evaluation_point = present_solution;
                 evaluation_point.add(alpha, newton_update);
                 nonzero_constraints.distribute(evaluation_point);
@@ -472,13 +649,15 @@ void SolveRing<dim>::newton_iteration(
                 std::cout << "  alpha: " << std::setw(10) << alpha
                           << std::setw(0) << "  residual: " << current_res
                           << std::endl;
-                // if ((last_res - current_res) >= (alpha * last_res / 2)) {
-                if (current_res < last_res) {
+                if (boundary_updated or
+                    ((last_res - current_res) >=
+                     (alpha * last_res * prms.alpha_check_factor))) {
+                    // if (boundary_updated or (current_res < last_res)) {
+                    boundary_updated = false;
                     break;
                 }
             }
             present_solution = evaluation_point;
-            output_results("test2");
             std::cout << "  number of line searches: " << line_search_n
                       << "  residual: " << current_res << std::endl;
             last_res = current_res;
@@ -491,14 +670,14 @@ void SolveRing<dim>::newton_iteration(
 template <int dim>
 void SolveRing<dim>::output_grid() const {
     GridOut grid_out;
-    std::ofstream grid_output {"outs/mesh.vtk"};
+    std::ofstream grid_output {prms.output_prefix + "_mesh.vtk"};
     grid_out.write_vtk(triangulation, grid_output);
 }
 
 template <int dim>
 void SolveRing<dim>::output_checkpoint(const std::string checkpoint) const {
     std::ofstream solution_out {
-            prms.output_prefix + "_displacement" + checkpoint + ".ar"};
+            prms.output_prefix + "_displacement_" + checkpoint + ".ar"};
     boost::archive::text_oarchive solution_ar {solution_out};
     present_solution.save(solution_ar, 0);
 
@@ -556,45 +735,72 @@ void SolveRing<dim>::load_checkpoint(const std::string checkpoint) {
 }
 
 template <int dim>
+std::string SolveRing<dim>::format_gamma(const double gamma) {
+
+    // Subtract a half to keep integer values of log10 in precision below
+    int precision {
+            static_cast<int>(std::log10(prms.num_gamma_iters - 0.5)) + 1};
+    std::ostringstream stream_obj;
+    stream_obj << std::fixed;
+    stream_obj << std::setprecision(precision);
+    stream_obj << gamma;
+    return stream_obj.str();
+}
+
+template <int dim>
+void SolveRing<dim>::update_boundary_function_gamma() {
+    boundary_function.gamma = gamma;
+}
+
+template <int dim>
+void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
+    boundary_function.f1 = prms.boundary_functions[stage_i];
+    boundary_function.f2 = prms.boundary_functions[stage_i + 1];
+}
+
+template <int dim>
 void SolveRing<dim>::run() {
     make_grid();
     output_grid();
-    int num_gamma_iters {1};
     std::string checkpoint;
+    bool first_step {true};
     if (prms.load_from_checkpoint) {
+        first_step = false;
         load_checkpoint(prms.input_checkpoint);
     }
     else {
         initiate_system();
     }
     setup_constraints();
-    bool first_step {true};
-    for (auto i {0}; i != num_gamma_iters; i++) {
-        double gamma_i = static_cast<double>((i + 1)) / num_gamma_iters;
-        gamma_i = 1.1;
-        std::ostringstream stream_obj;
-        stream_obj << std::fixed;
-        stream_obj << std::setprecision(2);
-        stream_obj << gamma_i;
-        checkpoint = stream_obj.str();
-        cout << "Gamma " << stream_obj.str() << std::endl;
-        gamma = {gamma_i, gamma_i, gamma_i};
-        update_constraints();
-        if (first_step) {
-            setup_sparsity_pattern();
+    setup_sparsity_pattern();
+    for (unsigned int stage_i {prms.starting_stage};
+         stage_i != prms.num_boundary_stages;
+         stage_i++) {
+        update_boundary_function_stage(stage_i);
+        for (unsigned int i {0}; i != prms.num_gamma_iters; i++) {
+            gamma = static_cast<double>((i + 1)) / prms.num_gamma_iters;
+            std::string gamma_formatted {format_gamma(gamma)};
+            checkpoint = std::to_string(stage_i) + "-" + gamma_formatted;
+            cout << "Stage " << std::to_string(stage_i) << ", gamma "
+                 << gamma_formatted << std::endl;
+            update_constraints();
+            newton_iteration(
+                    prms.nonlinear_tol,
+                    prms.max_n_line_searches,
+                    first_step,
+                    checkpoint);
+            output_checkpoint(checkpoint);
+            first_step = false;
         }
-        newton_iteration(1e-12, 10, first_step, checkpoint);
+        checkpoint = "final";
         output_checkpoint(checkpoint);
-        first_step = false;
+        output_results(checkpoint);
     }
-    checkpoint = "final";
-    // output_checkpoint(checkpoint);
-    // output_results(checkpoint);
 }
 
 int main() {
     deallog.depth_console(0);
-    Params prms {};
+    Params<3> prms {};
     SolveRing<3> ring_solver {prms};
     ring_solver.run();
 

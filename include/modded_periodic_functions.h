@@ -18,6 +18,19 @@
 
 using namespace dealii;
 
+/*template <int dim, typename RangeNumberType = double>
+class TwoPointFunction {
+  public:
+    TwoPointFunction() {}
+    TwoPointFunction(const TwoPointFunction&) = default;
+    virtual ~TwoPointFunction() = 0;
+    TwoPointFunction& operator=(const TwoPointFunction&);
+    virtual void vector_value(
+            const Point<dim>& p1,
+            const Point<dim>& p2,
+            Vector<RangeNumberType>& values) const;
+};*/
+
 template <typename FaceIterator, typename number, int dim>
 void set_periodicity_constraints(
         const FaceIterator& face_1,
@@ -25,7 +38,7 @@ void set_periodicity_constraints(
         const FullMatrix<double>& transformation,
         AffineConstraints<number>& affine_constraints,
         const std::vector<Point<dim>> dofs_to_supports,
-        std::vector<double> gamma,
+        Function<dim>& boundary_function,
         const ComponentMask& component_mask,
         const bool face_orientation,
         const bool face_flip,
@@ -74,7 +87,7 @@ void set_periodicity_constraints(
                     child_transformation,
                     affine_constraints,
                     dofs_to_supports,
-                    gamma,
+                    boundary_function,
                     component_mask,
                     face_orientation,
                     face_flip,
@@ -310,20 +323,12 @@ void set_periodicity_constraints(
             Point<dim> dof_left_support {dofs_to_supports[dof_left]};
             Point<dim> dof_right_support {dofs_to_supports[dof_right]};
             Point<dim> diff {dof_right_support - dof_left_support};
-            // Point<dim> offset {gamma[0]*1, 0, 0};
-            Point<dim> offset {0, 0, 0};
+            Vector<double> offset(3);
+
+            // This could be made more general
             Point<dim> ref {
                     abs(diff[0]), dof_left_support[1], dof_left_support[2]};
-            offset[0] = gamma[0] * (ref[0] * (2 / numbers::PI - 1) + ref[1]);
-            offset[1] = gamma[1] * (-2 * ref[0] / numbers::PI - ref[1]);
-            offset[2] = 0;
-            //offset[0] = (1.0 - gamma[0]) *
-            //                    (ref[0] * (2 / numbers::PI - 1) + ref[1]) +
-            //            gamma[0] * -ref[0];
-            //offset[1] =
-            //        (1.0 - gamma[1]) * (-2 * ref[0] / numbers::PI - ref[1]) +
-            //        gamma[1] * (-ref[0] / numbers::PI - 2 * ref[1]);
-            //offset[2] = 0;
+            boundary_function.vector_value(ref, offset);
             affine_constraints.set_inhomogeneity(
                     dof_left, offset[component_index]);
 
@@ -447,7 +452,7 @@ void make_periodicity_constraints(
         const typename identity<FaceIterator>::type& face_2,
         AffineConstraints<number>& constraints,
         std::vector<Point<dim>> dofs_to_supports,
-        std::vector<double> gamma,
+        Function<dim>& boundary_function,
         const ComponentMask& component_mask = ComponentMask(),
         const bool face_orientation = true,
         const bool face_flip = false,
@@ -463,7 +468,7 @@ void make_periodicity_constraints(
         const typename identity<FaceIterator>::type& face_2,
         AffineConstraints<number>& affine_constraints,
         std::vector<Point<dim>> dofs_to_supports,
-        std::vector<double> gamma,
+        Function<dim>& boundary_function,
         const ComponentMask& component_mask,
         const bool face_orientation,
         const bool face_flip,
@@ -612,7 +617,7 @@ void make_periodicity_constraints(
                     face_2->child(j),
                     affine_constraints,
                     dofs_to_supports,
-                    gamma,
+                    boundary_function,
                     component_mask,
                     face_orientation,
                     face_flip,
@@ -652,7 +657,7 @@ void make_periodicity_constraints(
                         transformation,
                         affine_constraints,
                         dofs_to_supports,
-                        gamma,
+                        boundary_function,
                         component_mask,
                         face_orientation,
                         face_flip,
@@ -669,7 +674,7 @@ void make_periodicity_constraints(
                         inverse,
                         affine_constraints,
                         dofs_to_supports,
-                        gamma,
+                        boundary_function,
                         component_mask,
                         face_orientation,
                         face_flip,
@@ -692,7 +697,7 @@ void make_periodicity_constraints(
                     transformation,
                     affine_constraints,
                     dofs_to_supports,
-                    gamma,
+                    boundary_function,
                     component_mask,
                     face_orientation,
                     face_orientation ? face_rotation ^ face_flip : face_flip,
@@ -709,7 +714,7 @@ void make_periodicity_constraints(
                 periodic_faces,
         AffineConstraints<number>& constraints,
         std::vector<Point<dim>> dofs_to_supports,
-        std::vector<double> gamma,
+        Function<dim>& boundary_function,
         const ComponentMask& component_mask = ComponentMask(),
         const std::vector<unsigned int>& first_vector_components =
                 std::vector<unsigned int>(),
@@ -722,7 +727,7 @@ void make_periodicity_constraints(
                 periodic_faces,
         AffineConstraints<number>& constraints,
         std::vector<Point<dim>> dofs_to_supports,
-        std::vector<double> gamma,
+        Function<dim>& boundary_function,
         const ComponentMask& component_mask,
         const std::vector<unsigned int>& first_vector_components,
         const number periodicity_factor) {
@@ -744,7 +749,7 @@ void make_periodicity_constraints(
                 face_2,
                 constraints,
                 dofs_to_supports,
-                gamma,
+                boundary_function,
                 component_mask,
                 pair.orientation[0],
                 pair.orientation[1],

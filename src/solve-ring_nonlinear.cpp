@@ -27,6 +27,7 @@
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_out.h>
+#include <deal.II/grid/grid_refinement.h>
 #include <deal.II/grid/grid_tools.h>
 #include <deal.II/grid/tria.h>
 #include <deal.II/grid/tria_accessor.h>
@@ -42,7 +43,9 @@
 #include <deal.II/lac/vector.h>
 
 #include <deal.II/numerics/data_out.h>
+#include <deal.II/numerics/error_estimator.h>
 #include <deal.II/numerics/matrix_tools.h>
+#include <deal.II/numerics/solution_transfer.h>
 #include <deal.II/numerics/vector_tools.h>
 
 #include "modded_periodic_functions.h"
@@ -51,12 +54,13 @@ using namespace dealii;
 
 template <int dim>
 struct Params {
-    unsigned int refinements;
+    unsigned int global_refinements;
+    unsigned int adaptive_refinements;
     double length;
     double width;
     unsigned int num_boundary_stages;
     unsigned int starting_stage;
-    unsigned int num_gamma_iters;
+    std::vector<unsigned int> num_gamma_iters;
 
     // There is probably a better way to do this
     static const unsigned int max_stages {5};
@@ -98,14 +102,20 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
         prm.declare_entry(
-                "Number of refinements",
+                "Number of initial global refinements",
                 "2",
                 Patterns::Integer(0),
                 "Number of global mesh refinement steps "
                 "applied to initial coarse grid");
         prm.declare_entry(
-                "length", "20", Patterns::Double(0), "Length of beam");
-        prm.declare_entry("width", "2", Patterns::Double(0), "Width of beam");
+                "Number of final adaptive refinements",
+                "0",
+                Patterns::Integer(0),
+                "Number of final adaptive refinements");
+        prm.declare_entry(
+                "Beam length", "20", Patterns::Double(0), "Length of beam");
+        prm.declare_entry(
+                "Beam width", "2", Patterns::Double(0), "Width of beam");
     }
     prm.leave_subsection();
 
@@ -121,17 +131,19 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "0",
                 Patterns::Integer(0),
                 "Boundary stage to start calculations on");
-        prm.declare_entry(
-                "Number of boundary increments",
-                "1",
-                Patterns::Integer(1),
-                "Number of boundary increments");
     }
     prm.leave_subsection();
 
     for (unsigned int i {0}; i != max_stages + 1; i++) {
         prm.enter_subsection("Boundary function stage " + std::to_string(i));
-        { Functions::ParsedFunction<dim>::declare_parameters(prm, dim); }
+        {
+            prm.declare_entry(
+                    "Number of boundary increments",
+                    "1",
+                    Patterns::Integer(1),
+                    "Number of boundary increments");
+            Functions::ParsedFunction<dim>::declare_parameters(prm, dim);
+        }
         prm.leave_subsection();
     }
 
@@ -221,9 +233,12 @@ template <int dim>
 void Params<dim>::parse_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
-        refinements = prm.get_integer("Number of refinements");
-        length = prm.get_double("length");
-        width = prm.get_double("width");
+        global_refinements =
+                prm.get_integer("Number of initial global refinements");
+        adaptive_refinements =
+                prm.get_integer("Number of final adaptive refinements");
+        length = prm.get_double("Beam length");
+        width = prm.get_double("Beam width");
     }
     prm.leave_subsection();
 
@@ -231,13 +246,16 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
     {
         num_boundary_stages = prm.get_integer("Number of boundary stages");
         starting_stage = prm.get_integer("Starting stage");
-        num_gamma_iters = prm.get_integer("Number of boundary increments");
     }
     prm.leave_subsection();
 
     for (unsigned int i {0}; i != num_boundary_stages + 1; i++) {
         prm.enter_subsection("Boundary function stage " + std::to_string(i));
-        boundary_functions[i]->parse_parameters(prm);
+        {
+            num_gamma_iters.push_back(
+                    prm.get_integer("Number of boundary increments"));
+            boundary_functions[i]->parse_parameters(prm);
+        }
         prm.leave_subsection();
     }
 
@@ -335,7 +353,7 @@ class SolveRing {
   private:
     void make_grid();
     void initiate_system();
-    void setup_constraints();
+    void setup_constraints(unsigned int stage_i);
     void update_constraints();
     void setup_sparsity_pattern();
     void assemble(const bool initial_step, const bool assemble_matrix);
@@ -352,9 +370,12 @@ class SolveRing {
     void output_checkpoint(const std::string checkpoint) const;
     void output_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
-    std::string format_gamma(const double gamma);
+    std::string format_gamma(
+            const double gamma,
+            const unsigned int num_gamma_iters);
     void update_boundary_function_gamma();
     void update_boundary_function_stage(unsigned int stage_i);
+    void refine_mesh(unsigned int stage_i);
 
     Triangulation<dim> triangulation;
     FESystem<dim> fe;
@@ -408,7 +429,7 @@ void SolveRing<dim>::make_grid() {
             }
         }
     }
-    triangulation.refine_global(prms.refinements);
+    triangulation.refine_global(prms.global_refinements);
 }
 
 template <int dim>
@@ -420,15 +441,16 @@ void SolveRing<dim>::initiate_system() {
 }
 
 template <int dim>
-void SolveRing<dim>::setup_constraints() {
+void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
     const MappingQ1<dim> mapping;
     dofs_to_supports.resize(dof_handler.n_dofs());
     DoFTools::map_dofs_to_support_points<dim, dim>(
             mapping, dof_handler, dofs_to_supports);
     collect_periodic_faces(dof_handler, 1, 2, 0, face_pairs);
 
-    update_boundary_function_stage(prms.starting_stage);
+    update_boundary_function_stage(stage_i);
     nonzero_constraints.clear();
+    DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
     make_periodicity_constraints<dim, dim, double>(
             face_pairs,
             nonzero_constraints,
@@ -437,6 +459,7 @@ void SolveRing<dim>::setup_constraints() {
     nonzero_constraints.close();
 
     zero_constraints.clear();
+    DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     make_periodicity_constraints<dim, dim, double>(
             face_pairs, zero_constraints, dofs_to_supports, zero_function);
     // VectorTools::interpolate_boundary_values(
@@ -455,6 +478,7 @@ template <int dim>
 void SolveRing<dim>::update_constraints() {
     update_boundary_function_gamma();
     nonzero_constraints.clear();
+    DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
     make_periodicity_constraints<dim, dim, double>(
             face_pairs,
             nonzero_constraints,
@@ -636,6 +660,7 @@ void SolveRing<dim>::newton_iteration(
             last_res = current_res;
         }
         else {
+            nonzero_constraints.distribute(present_solution);
             evaluation_point = present_solution;
             assemble_system(first_step);
             solve(first_step);
@@ -735,11 +760,12 @@ void SolveRing<dim>::load_checkpoint(const std::string checkpoint) {
 }
 
 template <int dim>
-std::string SolveRing<dim>::format_gamma(const double gamma) {
+std::string SolveRing<dim>::format_gamma(
+        const double gamma,
+        const unsigned int num_gamma_iters) {
 
     // Subtract a half to keep integer values of log10 in precision below
-    int precision {
-            static_cast<int>(std::log10(prms.num_gamma_iters - 0.5)) + 1};
+    int precision {static_cast<int>(std::log10(num_gamma_iters - 0.5)) + 1};
     std::ostringstream stream_obj;
     stream_obj << std::fixed;
     stream_obj << std::setprecision(precision);
@@ -759,6 +785,35 @@ void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
 }
 
 template <int dim>
+void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
+    Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+    KellyErrorEstimator<dim>::estimate(
+            dof_handler,
+            QGauss<dim - 1>(fe.degree + 1),
+            std::map<types::boundary_id, const Function<dim>*>(),
+            present_solution,
+            estimated_error_per_cell);
+
+    GridRefinement::refine_and_coarsen_fixed_number(
+            triangulation, estimated_error_per_cell, 0.3, 0.0);
+    triangulation.prepare_coarsening_and_refinement();
+    SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
+    soltrans.prepare_for_coarsening_and_refinement(present_solution);
+    triangulation.execute_coarsening_and_refinement();
+
+    dof_handler.distribute_dofs(fe);
+    Vector<double> interpolated_solution(dof_handler.n_dofs());
+    soltrans.interpolate(present_solution, interpolated_solution);
+
+    present_solution.reinit(dof_handler.n_dofs());
+    newton_update.reinit(dof_handler.n_dofs());
+    system_rhs.reinit(dof_handler.n_dofs());
+    setup_constraints(stage_i);
+    setup_sparsity_pattern();
+    present_solution = interpolated_solution;
+}
+
+template <int dim>
 void SolveRing<dim>::run() {
     make_grid();
     output_grid();
@@ -771,17 +826,18 @@ void SolveRing<dim>::run() {
     else {
         initiate_system();
     }
-    setup_constraints();
+    setup_constraints(prms.starting_stage);
     setup_sparsity_pattern();
     for (unsigned int stage_i {prms.starting_stage};
          stage_i != prms.num_boundary_stages;
          stage_i++) {
         update_boundary_function_stage(stage_i);
-        for (unsigned int i {0}; i != prms.num_gamma_iters; i++) {
-            gamma = static_cast<double>((i + 1)) / prms.num_gamma_iters;
-            std::string gamma_formatted {format_gamma(gamma)};
-            checkpoint = std::to_string(stage_i) + "-" + gamma_formatted;
-            cout << "Stage " << std::to_string(stage_i) << ", gamma "
+        unsigned int num_gamma_iters {prms.num_gamma_iters[stage_i]};
+        for (unsigned int i {0}; i != num_gamma_iters; i++) {
+            gamma = static_cast<double>((i + 1)) / num_gamma_iters;
+            std::string gamma_formatted {format_gamma(gamma, num_gamma_iters)};
+            checkpoint = std::to_string(stage_i + 1) + "-" + gamma_formatted;
+            cout << "Stage " << std::to_string(stage_i + 1) << ", gamma "
                  << gamma_formatted << std::endl;
             update_constraints();
             newton_iteration(
@@ -792,10 +848,26 @@ void SolveRing<dim>::run() {
             output_checkpoint(checkpoint);
             first_step = false;
         }
-        checkpoint = "final";
-        output_checkpoint(checkpoint);
-        output_results(checkpoint);
     }
+
+    checkpoint = "refine-0";
+    output_checkpoint(checkpoint);
+    output_results(checkpoint);
+
+    for (unsigned int i {0}; i != prms.adaptive_refinements; i++) {
+        cout << "Grid refinement " << std::to_string(i + 1) << std::endl;
+        checkpoint = "refine-" + std::to_string(i + 1);
+        refine_mesh(prms.num_boundary_stages - 1);
+        newton_iteration(
+                prms.nonlinear_tol,
+                prms.max_n_line_searches,
+                first_step,
+                checkpoint);
+    }
+
+    checkpoint = "final";
+    output_checkpoint(checkpoint);
+    output_results(checkpoint);
 }
 
 int main() {

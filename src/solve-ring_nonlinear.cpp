@@ -39,6 +39,7 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/sparse_direct.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/vector.h>
 
@@ -73,12 +74,15 @@ struct Params {
     double min_alpha;
     double alpha_check_factor;
     double nonlinear_tol;
+    std::string linear_solver;
     unsigned int max_linear_iters;
     double linear_tol;
+    double precon_relaxation_param;
     bool load_from_checkpoint;
     std::string input_prefix;
     std::string input_checkpoint;
     std::string output_prefix;
+    unsigned int gamma_precision;
 
     Params();
     static void declare_parameters(ParameterHandler& prm);
@@ -102,16 +106,15 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
         prm.declare_entry(
-                "Number of initial global refinements",
+                "Number of initial refinements",
                 "2",
                 Patterns::Integer(0),
-                "Number of global mesh refinement steps "
-                "applied to initial coarse grid");
+                "Number of initial mesh refinements");
         prm.declare_entry(
-                "Number of final adaptive refinements",
+                "Number of final refinements",
                 "0",
                 Patterns::Integer(0),
-                "Number of final adaptive refinements");
+                "Number of final mesh refinements");
         prm.declare_entry(
                 "Beam length", "20", Patterns::Double(0), "Length of beam");
         prm.declare_entry(
@@ -191,6 +194,11 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 Patterns::Double(0),
                 "Tolerance for nonlinear solver");
         prm.declare_entry(
+                "Linear solver",
+                "direct",
+                Patterns::Anything(),
+                "Type of linear solver (direct or iterative)");
+        prm.declare_entry(
                 "Maximum number of linear solver iterations",
                 "10000",
                 Patterns::Integer(1),
@@ -200,6 +208,11 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "1e-12",
                 Patterns::Double(0),
                 "Tolerance for linear solver");
+        prm.declare_entry(
+                "Preconditioner relaxation parameter",
+                "1.0",
+                Patterns::Double(0),
+                "Preconditioner relaxation parameter");
     }
     prm.leave_subsection();
 
@@ -225,6 +238,11 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "",
                 Patterns::Anything(),
                 "Prefix of the output filename");
+        prm.declare_entry(
+                "Gamma precision",
+                "1",
+                Patterns::Integer(0),
+                "Number of digits to include in gamma string");
     }
     prm.leave_subsection();
 }
@@ -233,10 +251,8 @@ template <int dim>
 void Params<dim>::parse_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
-        global_refinements =
-                prm.get_integer("Number of initial global refinements");
-        adaptive_refinements =
-                prm.get_integer("Number of final adaptive refinements");
+        global_refinements = prm.get_integer("Number of initial refinements");
+        adaptive_refinements = prm.get_integer("Number of final refinements");
         length = prm.get_double("Beam length");
         width = prm.get_double("Beam width");
     }
@@ -274,9 +290,12 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         alpha_check_factor = prm.get_double("Alpha check factor");
         min_alpha = prm.get_double("Minimum alpha");
         nonlinear_tol = prm.get_double("Nonlinear tolerance");
+        linear_solver = prm.get("Linear solver");
         max_linear_iters =
                 prm.get_integer("Maximum number of linear solver iterations");
         linear_tol = prm.get_double("Linear tolerance");
+        precon_relaxation_param =
+                prm.get_double("Preconditioner relaxation parameter");
     }
     prm.leave_subsection();
 
@@ -286,6 +305,7 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         input_prefix = prm.get("Input filename prefix");
         input_checkpoint = prm.get("Input checkpoint");
         output_prefix = prm.get("Output filename prefix");
+        gamma_precision = prm.get_integer("Gamma precision");
     }
     prm.leave_subsection();
 }
@@ -361,21 +381,16 @@ class SolveRing {
     void assemble_rhs(const bool initial_step);
     void solve(const bool initial_step);
     double calc_residual_norm();
-    void newton_iteration(
-            const double tolerance,
-            const unsigned int max_n_line_searches,
-            bool first_step,
-            const std::string checkpoint);
+    void newton_iteration(bool first_step, const std::string checkpoint);
     void output_grid() const;
     void output_checkpoint(const std::string checkpoint) const;
     void output_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
-    std::string format_gamma(
-            const double gamma,
-            const unsigned int num_gamma_iters);
+    std::string format_gamma();
     void update_boundary_function_gamma();
     void update_boundary_function_stage(unsigned int stage_i);
     void refine_mesh(unsigned int stage_i);
+    void center_solution_on_mean();
 
     Triangulation<dim> triangulation;
     FESystem<dim> fe;
@@ -462,12 +477,6 @@ void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
     DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     make_periodicity_constraints<dim, dim, double>(
             face_pairs, zero_constraints, dofs_to_supports, zero_function);
-    // VectorTools::interpolate_boundary_values(
-    //        dof_handler, 1, Functions::ZeroFunction<dim>(3),
-    //        zero_constraints);
-    // VectorTools::interpolate_boundary_values(
-    //        dof_handler, 2, Functions::ZeroFunction<dim>(3),
-    //        zero_constraints);
     zero_constraints.close();
 
     cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
@@ -484,18 +493,7 @@ void SolveRing<dim>::update_constraints() {
             nonzero_constraints,
             dofs_to_supports,
             boundary_function);
-    /*VectorTools::interpolate_boundary_values(
-            dof_handler,
-            1,
-            Functions::ZeroFunction<dim>(3),
-            nonzero_constraints);
-    VectorTools::interpolate_boundary_values(
-            dof_handler,
-            2,
-            BoundaryValues<dim>(gamma[0], 3),
-            nonzero_constraints);*/
     nonzero_constraints.close();
-    // nonzero_constraints.distribute(present_solution);
 }
 
 template <int dim>
@@ -607,14 +605,20 @@ template <int dim>
 void SolveRing<dim>::solve(const bool initial_step) {
     const AffineConstraints<double>& constraints_used =
             initial_step ? nonzero_constraints : zero_constraints;
-    SolverControl solver_control(prms.max_linear_iters, prms.linear_tol);
-    SolverGMRES<Vector<double>> solver(solver_control);
-    PreconditionJacobi<SparseMatrix<double>> preconditioner;
-    preconditioner.initialize(system_matrix, 1.2);
-    // SolverCG<Vector<double>> solver(solver_control);
-    // PreconditionSSOR<SparseMatrix<double>> preconditioner;
-    // preconditioner.initialize(system_matrix, 1.2);
-    solver.solve(system_matrix, newton_update, system_rhs, preconditioner);
+
+    if (prms.linear_solver == "iterative") {
+        SolverControl solver_control(prms.max_linear_iters, prms.linear_tol);
+        SolverGMRES<Vector<double>> solver(solver_control);
+        PreconditionSSOR<SparseMatrix<double>> preconditioner;
+        preconditioner.initialize(system_matrix, prms.precon_relaxation_param);
+        solver.solve(system_matrix, newton_update, system_rhs, preconditioner);
+    }
+    else if (prms.linear_solver == "direct") {
+        SparseDirectUMFPACK A_direct;
+        A_direct.initialize(system_matrix);
+        A_direct.vmult(newton_update, system_rhs);
+    }
+
     constraints_used.distribute(newton_update);
 }
 
@@ -632,8 +636,6 @@ double SolveRing<dim>::calc_residual_norm() {
 
 template <int dim>
 void SolveRing<dim>::newton_iteration(
-        const double tolerance,
-        const unsigned int max_n_line_searches,
         bool first_step,
         const std::string checkpoint) {
 
@@ -642,8 +644,8 @@ void SolveRing<dim>::newton_iteration(
     double last_res = 1.0;
     double current_res = 1.0;
 
-    while ((first_step or (current_res > tolerance)) and
-           line_search_n < max_n_line_searches) {
+    while ((first_step or (current_res > prms.nonlinear_tol)) and
+           line_search_n < prms.max_n_line_searches) {
         if (first_step) {
             evaluation_point = present_solution;
             assemble_system(first_step);
@@ -666,6 +668,7 @@ void SolveRing<dim>::newton_iteration(
             solve(first_step);
             for (double alpha {1.0}; alpha > prms.min_alpha;
                  alpha *= prms.alpha_factor) {
+
                 evaluation_point = present_solution;
                 evaluation_point.add(alpha, newton_update);
                 nonzero_constraints.distribute(evaluation_point);
@@ -677,7 +680,6 @@ void SolveRing<dim>::newton_iteration(
                 if (boundary_updated or
                     ((last_res - current_res) >=
                      (alpha * last_res * prms.alpha_check_factor))) {
-                    // if (boundary_updated or (current_res < last_res)) {
                     boundary_updated = false;
                     break;
                 }
@@ -687,9 +689,52 @@ void SolveRing<dim>::newton_iteration(
                       << "  residual: " << current_res << std::endl;
             last_res = current_res;
             ++line_search_n;
+            center_solution_on_mean();
         }
     }
     output_results(checkpoint);
+}
+
+// center_solution
+template <int dim>
+void SolveRing<dim>::center_solution_on_mean() {
+    Vector<double> mean_u(3);
+    // This would need to be changed to only count each global dof once
+    /*QGauss<dim> quadrature_formula(fe.degree + 1);
+    FEValues<dim> fe_values(fe, quadrature_formula, update_default);
+    const unsigned int dofs_per_cell = fe.dofs_per_cell;
+    for (const auto& cell: dof_handler.active_cell_iterators()) {
+        fe_values.reinit(cell);
+        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+        cell->get_dof_indices(local_dof_indices);
+        for (const unsigned int i: fe_values.dof_indices()) {
+            const unsigned int component_i {
+                    fe.system_to_component_index(i).first};
+            const unsigned int global_dof_i {local_dof_indices[i]};
+            mean_u[component_i] += present_solution[global_dof_i];
+        }
+    }
+    mean_u /= static_cast<double>(dof_handler.n_dofs()) / 3;
+    for (const auto& cell: dof_handler.active_cell_iterators()) {
+        fe_values.reinit(cell);
+        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+        cell->get_dof_indices(local_dof_indices);
+        for (const unsigned int i: fe_values.dof_indices()) {
+            const unsigned int component_i {
+                    fe.system_to_component_index(i).first};
+            const unsigned int global_dof_i {local_dof_indices[i]};
+            present_solution[global_dof_i] -= mean_u[component_i];
+        }
+    }*/
+    for (unsigned int i {0}; i != dof_handler.n_dofs(); i++) {
+        const unsigned int component_i {i % dim};
+        mean_u[component_i] += present_solution[i];
+    }
+    mean_u /= static_cast<double>(dof_handler.n_dofs()) / 3;
+    for (unsigned int i {0}; i != dof_handler.n_dofs(); i++) {
+        const unsigned int component_i {i % dim};
+        present_solution[i] -= mean_u[component_i];
+    }
 }
 
 template <int dim>
@@ -760,15 +805,10 @@ void SolveRing<dim>::load_checkpoint(const std::string checkpoint) {
 }
 
 template <int dim>
-std::string SolveRing<dim>::format_gamma(
-        const double gamma,
-        const unsigned int num_gamma_iters) {
-
-    // Subtract a half to keep integer values of log10 in precision below
-    int precision {static_cast<int>(std::log10(num_gamma_iters - 0.5)) + 1};
+std::string SolveRing<dim>::format_gamma() {
     std::ostringstream stream_obj;
     stream_obj << std::fixed;
-    stream_obj << std::setprecision(precision);
+    stream_obj << std::setprecision(prms.gamma_precision);
     stream_obj << gamma;
     return stream_obj.str();
 }
@@ -786,7 +826,7 @@ void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
 
 template <int dim>
 void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
-    Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+    /*Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
     KellyErrorEstimator<dim>::estimate(
             dof_handler,
             QGauss<dim - 1>(fe.degree + 1),
@@ -799,6 +839,14 @@ void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
     triangulation.prepare_coarsening_and_refinement();
     SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
     soltrans.prepare_for_coarsening_and_refinement(present_solution);
+    triangulation.execute_coarsening_and_refinement();*/
+
+    Vector<double> cells_to_refine(triangulation.n_active_cells());
+    cells_to_refine = 1;
+    GridRefinement::refine(triangulation, cells_to_refine, 0);
+    triangulation.prepare_coarsening_and_refinement();
+    SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
+    soltrans.prepare_for_pure_refinement();
     triangulation.execute_coarsening_and_refinement();
 
     dof_handler.distribute_dofs(fe);
@@ -835,16 +883,12 @@ void SolveRing<dim>::run() {
         unsigned int num_gamma_iters {prms.num_gamma_iters[stage_i]};
         for (unsigned int i {0}; i != num_gamma_iters; i++) {
             gamma = static_cast<double>((i + 1)) / num_gamma_iters;
-            std::string gamma_formatted {format_gamma(gamma, num_gamma_iters)};
+            std::string gamma_formatted {format_gamma()};
             checkpoint = std::to_string(stage_i + 1) + "-" + gamma_formatted;
             cout << "Stage " << std::to_string(stage_i + 1) << ", gamma "
                  << gamma_formatted << std::endl;
             update_constraints();
-            newton_iteration(
-                    prms.nonlinear_tol,
-                    prms.max_n_line_searches,
-                    first_step,
-                    checkpoint);
+            newton_iteration(first_step, checkpoint);
             output_checkpoint(checkpoint);
             first_step = false;
         }
@@ -858,11 +902,7 @@ void SolveRing<dim>::run() {
         cout << "Grid refinement " << std::to_string(i + 1) << std::endl;
         checkpoint = "refine-" + std::to_string(i + 1);
         refine_mesh(prms.num_boundary_stages - 1);
-        newton_iteration(
-                prms.nonlinear_tol,
-                prms.max_n_line_searches,
-                first_step,
-                checkpoint);
+        newton_iteration(first_step, checkpoint);
     }
 
     checkpoint = "final";

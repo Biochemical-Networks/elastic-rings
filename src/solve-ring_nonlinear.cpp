@@ -407,6 +407,7 @@ class SolveRing {
     Vector<double> newton_update;
     Vector<double> system_rhs;
     Vector<double> evaluation_point;
+    double present_energy;
 
     std::vector<Point<dim>> dofs_to_supports;
     std::vector<GridTools::PeriodicFacePair<
@@ -512,6 +513,7 @@ void SolveRing<dim>::assemble(
         system_matrix = 0;
     }
     system_rhs = 0;
+    present_energy = 0;
 
     QGauss<dim> quadrature_formula(fe.degree + 1);
     FEValues<dim> fe_values(
@@ -567,6 +569,7 @@ void SolveRing<dim>::assemble(
         }
 
         ad_helper.register_energy_functional(energy_ad);
+        present_energy += ad_helper.compute_energy();
         ad_helper.compute_residual(cell_rhs);
         cell_rhs *= -1.0; // RHS = - residual
         if (assemble_matrix) {
@@ -659,6 +662,8 @@ void SolveRing<dim>::newton_iteration(
             current_res = calc_residual_norm();
             std::cout << "The residual of initial guess is " << current_res
                       << std::endl;
+            std::cout << "The energy of initial guess is " << present_energy
+                      << std::endl;
             last_res = current_res;
         }
         else {
@@ -686,7 +691,8 @@ void SolveRing<dim>::newton_iteration(
             }
             present_solution = evaluation_point;
             std::cout << "  number of line searches: " << line_search_n
-                      << "  residual: " << current_res << std::endl;
+                      << "  residual: " << current_res
+                      << "  energy: " << present_energy << std::endl;
             last_res = current_res;
             ++line_search_n;
             center_solution_on_mean();

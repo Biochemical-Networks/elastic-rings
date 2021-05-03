@@ -44,6 +44,8 @@
 #include <deal.II/lac/vector.h>
 
 #include <deal.II/numerics/data_out.h>
+#include <deal.II/numerics/data_out_faces.h>
+#include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/numerics/error_estimator.h>
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/solution_transfer.h>
@@ -340,28 +342,185 @@ void ComposedFunction<dim>::vector_value(
 }
 
 template <int dim>
-class BoundaryValues: public Function<dim> {
+class MaterialNormalVectorPostprocess: public DataPostprocessorVector<dim> {
   public:
-    BoundaryValues(double gamma, unsigned int comps);
-    void vector_value(const Point<dim>& p, Vector<double>& values)
-            const override;
-
-  private:
-    double gamma;
+    MaterialNormalVectorPostprocess();
+    virtual void evaluate_vector_field(
+            const DataPostprocessorInputs::Vector<dim>& input_data,
+            std::vector<Vector<double>>& computed_quantities) const;
 };
 
 template <int dim>
-BoundaryValues<dim>::BoundaryValues(double gamma, unsigned int comps):
-        gamma {gamma}, Function<dim> {comps} {}
+MaterialNormalVectorPostprocess<dim>::MaterialNormalVectorPostprocess():
+        DataPostprocessorVector<dim>("material_normal", update_normal_vectors) {
+}
 
 template <int dim>
-void BoundaryValues<dim>::vector_value(
-        const Point<dim>& p,
-        Vector<double>& values) const {
+void MaterialNormalVectorPostprocess<dim>::evaluate_vector_field(
+        const DataPostprocessorInputs::Vector<dim>& input_data,
+        std::vector<Vector<double>>& computed_quantities) const {
 
-    values[0] = gamma * (p[0] * (2 / numbers::PI - 1) + p[1]);
-    values[1] = gamma * (-2 * p[0] / numbers::PI - p[1]);
-    values[2] = 0;
+    for (unsigned int i {0}; i != input_data.normals.size(); i++) {
+        const Tensor<1, dim, double> normal_vector_t {input_data.normals[i]};
+        Vector<double> normal_vector(dim);
+        for (unsigned int d {0}; d != dim; d++) {
+            normal_vector[d] = normal_vector_t[d];
+        }
+        computed_quantities[i] = normal_vector;
+    }
+}
+
+template <int dim>
+class SpatialNormalVectorPostprocess: public DataPostprocessorVector<dim> {
+  public:
+    SpatialNormalVectorPostprocess();
+    virtual void evaluate_vector_field(
+            const DataPostprocessorInputs::Vector<dim>& input_data,
+            std::vector<Vector<double>>& computed_quantities) const;
+};
+
+template <int dim>
+SpatialNormalVectorPostprocess<dim>::SpatialNormalVectorPostprocess():
+        DataPostprocessorVector<dim>(
+                "spatial_normal",
+                update_gradients | update_normal_vectors) {}
+
+template <int dim>
+void SpatialNormalVectorPostprocess<dim>::evaluate_vector_field(
+        const DataPostprocessorInputs::Vector<dim>& input_data,
+        std::vector<Vector<double>>& computed_quantities) const {
+
+    for (unsigned int i {0}; i != input_data.normals.size(); i++) {
+        Tensor<2, dim, double> grad_u {};
+        Tensor<2, dim, double> identity_tensor {};
+        for (unsigned int d {0}; d != dim; d++) {
+            grad_u[d] = input_data.solution_gradients[i][d];
+            identity_tensor[d][d] = 1;
+        }
+        const Tensor<2, dim, double> deformation_grad {
+                grad_u + identity_tensor};
+        const Tensor<1, dim, double> material_normal_vector {
+                input_data.normals[i]};
+        const Tensor<1, dim, double> spatial_normal_vector_t {
+                deformation_grad * material_normal_vector};
+        Vector<double> spatial_normal_vector(dim);
+        for (unsigned int d {0}; d != dim; d++) {
+            spatial_normal_vector[d] = spatial_normal_vector_t[d];
+        }
+        computed_quantities[i] = spatial_normal_vector;
+    }
+}
+
+template <int dim>
+class MaterialStressVectorPostprocess: public DataPostprocessorVector<dim> {
+  public:
+    MaterialStressVectorPostprocess(const double lambda, const double mu);
+    virtual void evaluate_vector_field(
+            const DataPostprocessorInputs::Vector<dim>& input_data,
+            std::vector<Vector<double>>& computed_quantities) const;
+
+  private:
+    const double lambda;
+    const double mu;
+};
+
+template <int dim>
+MaterialStressVectorPostprocess<dim>::MaterialStressVectorPostprocess(
+        const double lambda,
+        const double mu):
+        DataPostprocessorVector<dim>(
+                "material_stress",
+                update_gradients | update_normal_vectors),
+        lambda {lambda},
+        mu {mu} {}
+
+template <int dim>
+void MaterialStressVectorPostprocess<dim>::evaluate_vector_field(
+        const DataPostprocessorInputs::Vector<dim>& input_data,
+        std::vector<Vector<double>>& computed_quantities) const {
+
+    for (unsigned int i {0}; i != input_data.normals.size(); i++) {
+        Tensor<2, dim, double> grad_u {};
+        Tensor<2, dim, double> identity_tensor {};
+        for (unsigned int d {0}; d != dim; d++) {
+            grad_u[d] = input_data.solution_gradients[i][d];
+            identity_tensor[d][d] = 1;
+        }
+        const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
+        const Tensor<2, dim, double> green_lagrange_strain_tensor {
+                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+        const Tensor<2, dim, double> piola_kirchhoff_tensor {
+                lambda * trace(green_lagrange_strain_tensor) * identity_tensor +
+                mu * green_lagrange_strain_tensor};
+        const Tensor<1, dim, double> normal_vector {input_data.normals[i]};
+        const Tensor<1, dim, double> stress_vector_t =
+                piola_kirchhoff_tensor * normal_vector;
+        Vector<double> stress_vector(dim);
+        for (unsigned int d {0}; d != dim; d++) {
+            stress_vector[d] = stress_vector_t[d];
+        }
+        computed_quantities[i] = stress_vector;
+    }
+}
+
+template <int dim>
+class SpatialStressVectorPostprocess: public DataPostprocessorVector<dim> {
+  public:
+    SpatialStressVectorPostprocess(const double lambda, const double mu);
+    virtual void evaluate_vector_field(
+            const DataPostprocessorInputs::Vector<dim>& input_data,
+            std::vector<Vector<double>>& computed_quantities) const;
+
+  private:
+    const double lambda;
+    const double mu;
+};
+
+template <int dim>
+SpatialStressVectorPostprocess<dim>::SpatialStressVectorPostprocess(
+        const double lambda,
+        const double mu):
+        DataPostprocessorVector<dim>(
+                "spatial_stress",
+                update_gradients | update_normal_vectors),
+        lambda {lambda},
+        mu {mu} {}
+
+template <int dim>
+void SpatialStressVectorPostprocess<dim>::evaluate_vector_field(
+        const DataPostprocessorInputs::Vector<dim>& input_data,
+        std::vector<Vector<double>>& computed_quantities) const {
+
+    for (unsigned int i {0}; i != input_data.normals.size(); i++) {
+        Tensor<2, dim, double> grad_u {};
+        Tensor<2, dim, double> identity_tensor {};
+        for (unsigned int d {0}; d != dim; d++) {
+            grad_u[d] = input_data.solution_gradients[i][d];
+            identity_tensor[d][d] = 1;
+        }
+        const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
+        const Tensor<2, dim, double> green_lagrange_strain_tensor {
+                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+        const Tensor<2, dim, double> piola_kirchhoff_tensor {
+                lambda * trace(green_lagrange_strain_tensor) * identity_tensor +
+                mu * green_lagrange_strain_tensor};
+        const Tensor<1, dim, double> material_normal_vector {
+                input_data.normals[i]};
+        const Tensor<1, dim, double> material_stress_vector =
+                piola_kirchhoff_tensor * material_normal_vector;
+        const Tensor<2, dim, double> deformation_grad {
+                grad_u + identity_tensor};
+        const double deformation_grad_det {determinant(deformation_grad)};
+        const Tensor<1, dim, double> spatial_stress_vector_t {
+                deformation_grad * material_stress_vector /
+                deformation_grad_det};
+
+        Vector<double> spatial_stress_vector(dim);
+        for (unsigned int d {0}; d != dim; d++) {
+            spatial_stress_vector[d] = spatial_stress_vector_t[d];
+        }
+        computed_quantities[i] = spatial_stress_vector;
+    }
 }
 
 template <int dim>
@@ -606,6 +765,7 @@ void SolveRing<dim>::assemble_rhs(const bool initial_step) {
 
 template <int dim>
 void SolveRing<dim>::solve(const bool initial_step) {
+    newton_update = 0;
     const AffineConstraints<double>& constraints_used =
             initial_step ? nonzero_constraints : zero_constraints;
 
@@ -652,7 +812,6 @@ void SolveRing<dim>::newton_iteration(
         if (first_step) {
             evaluation_point = present_solution;
             assemble_system(first_step);
-            newton_update = present_solution;
             solve(first_step);
             present_solution = newton_update;
             nonzero_constraints.distribute(present_solution);
@@ -770,22 +929,53 @@ void SolveRing<dim>::output_checkpoint(const std::string checkpoint) const {
 
 template <int dim>
 void SolveRing<dim>::output_results(const std::string checkpoint) const {
-    DataOut<dim> data_out;
-    std::vector<std::string> solution_names(dim, "displacement");
-    data_out.attach_dof_handler(dof_handler);
     std::vector<DataComponentInterpretation::DataComponentInterpretation>
             data_component_interpretation(
                     dim,
                     DataComponentInterpretation::component_is_part_of_vector);
+    std::vector<std::string> solution_names(dim, "displacement");
+
+    DataOut<dim> data_out;
+    data_out.attach_dof_handler(dof_handler);
     data_out.add_data_vector(
             present_solution,
             solution_names,
             DataOut<dim>::type_dof_data,
             data_component_interpretation);
     data_out.build_patches();
+
     std::ofstream data_output(
-            prms.output_prefix + "_displacement_" + checkpoint + ".vtk");
+            prms.output_prefix + "_cells_" + checkpoint + ".vtk");
     data_out.write_vtk(data_output);
+
+    MaterialStressVectorPostprocess<dim> material_stress_vector_postprocessor {
+            lambda, mu};
+    SpatialStressVectorPostprocess<dim> spatial_stress_vector_postprocessor {
+            lambda, mu};
+    MaterialNormalVectorPostprocess<dim>
+            material_normal_vector_postprocessor {};
+    SpatialNormalVectorPostprocess<dim> spatial_normal_vector_postprocessor {};
+
+    DataOutFaces<dim> data_out_faces;
+    data_out_faces.attach_dof_handler(dof_handler);
+    data_out_faces.add_data_vector(
+            present_solution, material_stress_vector_postprocessor);
+    data_out_faces.add_data_vector(
+            present_solution, spatial_stress_vector_postprocessor);
+    data_out_faces.add_data_vector(
+            present_solution, material_normal_vector_postprocessor);
+    data_out_faces.add_data_vector(
+            present_solution, spatial_normal_vector_postprocessor);
+    data_out_faces.add_data_vector(
+            present_solution,
+            solution_names,
+            DataOutFaces<dim>::type_dof_data,
+            data_component_interpretation);
+    data_out_faces.build_patches();
+
+    std::ofstream data_output_faces(
+            prms.output_prefix + "_faces_" + checkpoint + ".vtk");
+    data_out_faces.write_vtk(data_output_faces);
 }
 
 template <int dim>
@@ -832,7 +1022,8 @@ void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
 
 template <int dim>
 void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
-    /*Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+    /*Vector<float>
+    estimated_error_per_cell(triangulation.n_active_cells());
     KellyErrorEstimator<dim>::estimate(
             dof_handler,
             QGauss<dim - 1>(fe.degree + 1),
@@ -857,7 +1048,7 @@ void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
 
     dof_handler.distribute_dofs(fe);
     Vector<double> interpolated_solution(dof_handler.n_dofs());
-    soltrans.interpolate(present_solution, interpolated_solution);
+    soltrans.refine_interpolate(present_solution, interpolated_solution);
 
     present_solution.reinit(dof_handler.n_dofs());
     newton_update.reinit(dof_handler.n_dofs());

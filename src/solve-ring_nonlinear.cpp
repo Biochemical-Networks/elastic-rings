@@ -524,6 +524,69 @@ void SpatialStressVectorPostprocess<dim>::evaluate_vector_field(
 }
 
 template <int dim>
+class SpatialStressVectorMovedMeshPostprocess:
+        public DataPostprocessorVector<dim> {
+  public:
+    SpatialStressVectorMovedMeshPostprocess(
+            const double lambda,
+            const double mu);
+    virtual void evaluate_vector_field(
+            const DataPostprocessorInputs::Vector<dim>& input_data,
+            std::vector<Vector<double>>& computed_quantities) const;
+
+  private:
+    const double lambda;
+    const double mu;
+};
+
+template <int dim>
+SpatialStressVectorMovedMeshPostprocess<dim>::
+        SpatialStressVectorMovedMeshPostprocess(
+                const double lambda,
+                const double mu):
+        DataPostprocessorVector<dim>(
+                "spatial_stress",
+                update_gradients | update_normal_vectors),
+        lambda {lambda},
+        mu {mu} {}
+
+template <int dim>
+void SpatialStressVectorMovedMeshPostprocess<dim>::evaluate_vector_field(
+        const DataPostprocessorInputs::Vector<dim>& input_data,
+        std::vector<Vector<double>>& computed_quantities) const {
+
+    for (unsigned int i {0}; i != input_data.normals.size(); i++) {
+        Tensor<2, dim, double> grad_u {};
+        Tensor<2, dim, double> identity_tensor {};
+        for (unsigned int d {0}; d != dim; d++) {
+            grad_u[d] = input_data.solution_gradients[i][d];
+            identity_tensor[d][d] = 1;
+        }
+        const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
+        const Tensor<2, dim, double> green_lagrange_strain_tensor {
+                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+        const Tensor<2, dim, double> piola_kirchhoff_tensor {
+                lambda * trace(green_lagrange_strain_tensor) * identity_tensor +
+                mu * green_lagrange_strain_tensor};
+        const Tensor<2, dim, double> deformation_grad {
+                grad_u + identity_tensor};
+        const double deformation_grad_det {determinant(deformation_grad)};
+        const Tensor<2, dim, double> cauchy_tensor {
+                deformation_grad * piola_kirchhoff_tensor *
+                transpose(deformation_grad) / deformation_grad_det};
+        const Tensor<1, dim, double> spatial_normal_vector {
+                input_data.normals[i]};
+        const Tensor<1, dim, double> spatial_stress_vector_t =
+                cauchy_tensor * spatial_normal_vector;
+        Vector<double> spatial_stress_vector(dim);
+        for (unsigned int d {0}; d != dim; d++) {
+            spatial_stress_vector[d] = spatial_stress_vector_t[d];
+        }
+        computed_quantities[i] = spatial_stress_vector;
+    }
+}
+
+template <int dim>
 class SolveRing {
   public:
     SolveRing(Params<dim>& prms);
@@ -550,6 +613,8 @@ class SolveRing {
     void update_boundary_function_stage(unsigned int stage_i);
     void refine_mesh(unsigned int stage_i);
     void center_solution_on_mean();
+    void move_mesh();
+    void output_moved_mesh_results(const std::string checkpoint) const;
 
     Triangulation<dim> triangulation;
     FESystem<dim> fe;
@@ -814,7 +879,6 @@ void SolveRing<dim>::newton_iteration(
             assemble_system(first_step);
             solve(first_step);
             present_solution = newton_update;
-            nonzero_constraints.distribute(present_solution);
             first_step = false;
             evaluation_point = present_solution;
             assemble_rhs(first_step);
@@ -835,7 +899,6 @@ void SolveRing<dim>::newton_iteration(
 
                 evaluation_point = present_solution;
                 evaluation_point.add(alpha, newton_update);
-                nonzero_constraints.distribute(evaluation_point);
                 assemble_rhs(first_step);
                 current_res = calc_residual_norm();
                 std::cout << "  alpha: " << std::setw(10) << alpha
@@ -860,7 +923,6 @@ void SolveRing<dim>::newton_iteration(
     output_results(checkpoint);
 }
 
-// center_solution
 template <int dim>
 void SolveRing<dim>::center_solution_on_mean() {
     Vector<double> mean_u(3);
@@ -899,6 +961,24 @@ void SolveRing<dim>::center_solution_on_mean() {
     for (unsigned int i {0}; i != dof_handler.n_dofs(); i++) {
         const unsigned int component_i {i % dim};
         present_solution[i] -= mean_u[component_i];
+    }
+}
+
+template <int dim>
+void SolveRing<dim>::move_mesh() {
+    std::vector<bool> vertex_touched(triangulation.n_vertices(), false);
+    for (auto& cell: dof_handler.active_cell_iterators()) {
+        for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell;
+             ++v) {
+            if (vertex_touched[cell->vertex_index(v)] == false) {
+                vertex_touched[cell->vertex_index(v)] = true;
+                Point<dim> vertex_displacement;
+                for (unsigned int d = 0; d < dim; ++d)
+                    vertex_displacement[d] =
+                            present_solution(cell->vertex_dof_index(v, d));
+                cell->vertex(v) += vertex_displacement;
+            }
+        }
     }
 }
 
@@ -971,6 +1051,33 @@ void SolveRing<dim>::output_results(const std::string checkpoint) const {
             solution_names,
             DataOutFaces<dim>::type_dof_data,
             data_component_interpretation);
+    data_out_faces.build_patches();
+
+    std::ofstream data_output_faces(
+            prms.output_prefix + "_faces_" + checkpoint + ".vtk");
+    data_out_faces.write_vtk(data_output_faces);
+}
+
+template <int dim>
+void SolveRing<dim>::output_moved_mesh_results(
+        const std::string checkpoint) const {
+    std::vector<DataComponentInterpretation::DataComponentInterpretation>
+            data_component_interpretation(
+                    dim,
+                    DataComponentInterpretation::component_is_part_of_vector);
+    std::vector<std::string> solution_names(dim, "displacement");
+
+    MaterialNormalVectorPostprocess<dim>
+            material_normal_vector_postprocessor {};
+    SpatialStressVectorMovedMeshPostprocess<dim>
+            spatial_stress_vector_postprocessor {lambda, mu};
+
+    DataOutFaces<dim> data_out_faces;
+    data_out_faces.attach_dof_handler(dof_handler);
+    data_out_faces.add_data_vector(
+            present_solution, material_normal_vector_postprocessor);
+    data_out_faces.add_data_vector(
+            present_solution, spatial_stress_vector_postprocessor);
     data_out_faces.build_patches();
 
     std::ofstream data_output_faces(
@@ -1105,6 +1212,10 @@ void SolveRing<dim>::run() {
     checkpoint = "final";
     output_checkpoint(checkpoint);
     output_results(checkpoint);
+
+    checkpoint = "moved-mesh";
+    //move_mesh();
+    //output_moved_mesh_results(checkpoint);
 }
 
 int main() {

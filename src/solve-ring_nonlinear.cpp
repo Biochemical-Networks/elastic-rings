@@ -61,6 +61,9 @@ struct Params {
     unsigned int adaptive_refinements;
     double length;
     double width;
+    unsigned int x_subdivisions;
+    unsigned int y_subdivisions;
+    unsigned int z_subdivisions;
     unsigned int num_boundary_stages;
     unsigned int starting_stage;
     std::vector<unsigned int> num_gamma_iters;
@@ -121,6 +124,21 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Beam length", "20", Patterns::Double(0), "Length of beam");
         prm.declare_entry(
                 "Beam width", "2", Patterns::Double(0), "Width of beam");
+        prm.declare_entry(
+                "x subdivisions",
+                "1",
+                Patterns::Integer(1),
+                "Number of subdivisions along x");
+        prm.declare_entry(
+                "y subdivisions",
+                "1",
+                Patterns::Integer(1),
+                "Number of subdivisions along y");
+        prm.declare_entry(
+                "z subdivisions",
+                "1",
+                Patterns::Integer(1),
+                "Number of subdivisions along z");
     }
     prm.leave_subsection();
 
@@ -257,6 +275,9 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         adaptive_refinements = prm.get_integer("Number of final refinements");
         length = prm.get_double("Beam length");
         width = prm.get_double("Beam width");
+        x_subdivisions = prm.get_integer("x subdivisions");
+        y_subdivisions = prm.get_integer("y subdivisions");
+        z_subdivisions = prm.get_integer("z subdivisions");
     }
     prm.leave_subsection();
 
@@ -703,26 +724,26 @@ void SolveRing<dim>::run() {
     output_results(checkpoint);
 
     checkpoint = "moved-mesh";
-    //move_mesh();
-    //output_moved_mesh_results(checkpoint);
+    // move_mesh();
+    // output_moved_mesh_results(checkpoint);
 }
 
 template <int dim>
 void SolveRing<dim>::make_grid() {
     const Point<dim>& origin {0, 0, 0};
     const Point<dim>& size {prms.length, prms.width, prms.width};
-    GridGenerator::hyper_rectangle(triangulation, origin, size);
+    const std::vector<unsigned int> subdivisions {
+            prms.x_subdivisions, prms.y_subdivisions, prms.z_subdivisions};
+    GridGenerator::subdivided_hyper_rectangle(
+            triangulation, subdivisions, origin, size);
     for (auto& face: triangulation.active_face_iterators()) {
-        if (std::fabs(face->center()(1) - prms.width / 2) < 1e-12) {
-            if (std::fabs(face->center()(0)) < 1e-12) {
-                face->set_boundary_id(1);
-            }
-            else if (std::fabs(face->center()(0) - prms.length) < 1e-12) {
-                face->set_boundary_id(2);
-            }
+        if (std::fabs(face->center()(0)) < 1e-12) {
+            face->set_boundary_id(1);
+        }
+        else if (std::fabs(face->center()(0) - prms.length) < 1e-12) {
+            face->set_boundary_id(2);
         }
     }
-    triangulation.refine_global(prms.global_refinements);
 }
 
 template <int dim>

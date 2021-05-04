@@ -597,6 +597,8 @@ class SolveRing {
     void initiate_system();
     void setup_constraints(unsigned int stage_i);
     void update_constraints();
+    void update_boundary_function_gamma();
+    void update_boundary_function_stage(unsigned int stage_i);
     void setup_sparsity_pattern();
     void assemble(const bool initial_step, const bool assemble_matrix);
     void assemble_system(const bool initial_step);
@@ -604,17 +606,15 @@ class SolveRing {
     void solve(const bool initial_step);
     double calc_residual_norm();
     void newton_iteration(bool first_step, const std::string checkpoint);
+    void center_solution_on_mean();
+    void refine_mesh(unsigned int stage_i);
+    void move_mesh();
     void output_grid() const;
     void output_checkpoint(const std::string checkpoint) const;
     void output_results(const std::string checkpoint) const;
+    void output_moved_mesh_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
     std::string format_gamma();
-    void update_boundary_function_gamma();
-    void update_boundary_function_stage(unsigned int stage_i);
-    void refine_mesh(unsigned int stage_i);
-    void center_solution_on_mean();
-    void move_mesh();
-    void output_moved_mesh_results(const std::string checkpoint) const;
 
     Triangulation<dim> triangulation;
     FESystem<dim> fe;
@@ -652,6 +652,59 @@ SolveRing<dim>::SolveRing(Params<dim>& prms):
         prms {prms} {
     mu = prms.E / (2 * (1 + prms.nu));
     lambda = prms.E * prms.nu / ((1 + prms.nu) * (1 - 2 * prms.nu));
+}
+
+template <int dim>
+void SolveRing<dim>::run() {
+    make_grid();
+    output_grid();
+    std::string checkpoint;
+    bool first_step {true};
+    if (prms.load_from_checkpoint) {
+        first_step = false;
+        load_checkpoint(prms.input_checkpoint);
+    }
+    else {
+        initiate_system();
+    }
+    setup_constraints(prms.starting_stage);
+    setup_sparsity_pattern();
+    for (unsigned int stage_i {prms.starting_stage};
+         stage_i != prms.num_boundary_stages;
+         stage_i++) {
+        update_boundary_function_stage(stage_i);
+        unsigned int num_gamma_iters {prms.num_gamma_iters[stage_i]};
+        for (unsigned int i {0}; i != num_gamma_iters; i++) {
+            gamma = static_cast<double>((i + 1)) / num_gamma_iters;
+            std::string gamma_formatted {format_gamma()};
+            checkpoint = std::to_string(stage_i + 1) + "-" + gamma_formatted;
+            cout << "Stage " << std::to_string(stage_i + 1) << ", gamma "
+                 << gamma_formatted << std::endl;
+            update_constraints();
+            newton_iteration(first_step, checkpoint);
+            output_checkpoint(checkpoint);
+            first_step = false;
+        }
+    }
+
+    checkpoint = "refine-0";
+    output_checkpoint(checkpoint);
+    output_results(checkpoint);
+
+    for (unsigned int i {0}; i != prms.adaptive_refinements; i++) {
+        cout << "Grid refinement " << std::to_string(i + 1) << std::endl;
+        checkpoint = "refine-" + std::to_string(i + 1);
+        refine_mesh(prms.num_boundary_stages - 1);
+        newton_iteration(first_step, checkpoint);
+    }
+
+    checkpoint = "final";
+    output_checkpoint(checkpoint);
+    output_results(checkpoint);
+
+    checkpoint = "moved-mesh";
+    //move_mesh();
+    //output_moved_mesh_results(checkpoint);
 }
 
 template <int dim>
@@ -719,6 +772,17 @@ void SolveRing<dim>::update_constraints() {
             dofs_to_supports,
             boundary_function);
     nonzero_constraints.close();
+}
+
+template <int dim>
+void SolveRing<dim>::update_boundary_function_gamma() {
+    boundary_function.gamma = gamma;
+}
+
+template <int dim>
+void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
+    boundary_function.f1 = prms.boundary_functions[stage_i];
+    boundary_function.f2 = prms.boundary_functions[stage_i + 1];
 }
 
 template <int dim>
@@ -926,33 +990,6 @@ void SolveRing<dim>::newton_iteration(
 template <int dim>
 void SolveRing<dim>::center_solution_on_mean() {
     Vector<double> mean_u(3);
-    // This would need to be changed to only count each global dof once
-    /*QGauss<dim> quadrature_formula(fe.degree + 1);
-    FEValues<dim> fe_values(fe, quadrature_formula, update_default);
-    const unsigned int dofs_per_cell = fe.dofs_per_cell;
-    for (const auto& cell: dof_handler.active_cell_iterators()) {
-        fe_values.reinit(cell);
-        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-        cell->get_dof_indices(local_dof_indices);
-        for (const unsigned int i: fe_values.dof_indices()) {
-            const unsigned int component_i {
-                    fe.system_to_component_index(i).first};
-            const unsigned int global_dof_i {local_dof_indices[i]};
-            mean_u[component_i] += present_solution[global_dof_i];
-        }
-    }
-    mean_u /= static_cast<double>(dof_handler.n_dofs()) / 3;
-    for (const auto& cell: dof_handler.active_cell_iterators()) {
-        fe_values.reinit(cell);
-        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-        cell->get_dof_indices(local_dof_indices);
-        for (const unsigned int i: fe_values.dof_indices()) {
-            const unsigned int component_i {
-                    fe.system_to_component_index(i).first};
-            const unsigned int global_dof_i {local_dof_indices[i]};
-            present_solution[global_dof_i] -= mean_u[component_i];
-        }
-    }*/
     for (unsigned int i {0}; i != dof_handler.n_dofs(); i++) {
         const unsigned int component_i {i % dim};
         mean_u[component_i] += present_solution[i];
@@ -962,6 +999,28 @@ void SolveRing<dim>::center_solution_on_mean() {
         const unsigned int component_i {i % dim};
         present_solution[i] -= mean_u[component_i];
     }
+}
+
+template <int dim>
+void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
+    Vector<double> cells_to_refine(triangulation.n_active_cells());
+    cells_to_refine = 1;
+    GridRefinement::refine(triangulation, cells_to_refine, 0);
+    triangulation.prepare_coarsening_and_refinement();
+    SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
+    soltrans.prepare_for_pure_refinement();
+    triangulation.execute_coarsening_and_refinement();
+
+    dof_handler.distribute_dofs(fe);
+    Vector<double> interpolated_solution(dof_handler.n_dofs());
+    soltrans.refine_interpolate(present_solution, interpolated_solution);
+
+    present_solution.reinit(dof_handler.n_dofs());
+    newton_update.reinit(dof_handler.n_dofs());
+    system_rhs.reinit(dof_handler.n_dofs());
+    setup_constraints(stage_i);
+    setup_sparsity_pattern();
+    present_solution = interpolated_solution;
 }
 
 template <int dim>
@@ -1114,108 +1173,6 @@ std::string SolveRing<dim>::format_gamma() {
     stream_obj << std::setprecision(prms.gamma_precision);
     stream_obj << gamma;
     return stream_obj.str();
-}
-
-template <int dim>
-void SolveRing<dim>::update_boundary_function_gamma() {
-    boundary_function.gamma = gamma;
-}
-
-template <int dim>
-void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
-    boundary_function.f1 = prms.boundary_functions[stage_i];
-    boundary_function.f2 = prms.boundary_functions[stage_i + 1];
-}
-
-template <int dim>
-void SolveRing<dim>::refine_mesh(unsigned int stage_i) {
-    /*Vector<float>
-    estimated_error_per_cell(triangulation.n_active_cells());
-    KellyErrorEstimator<dim>::estimate(
-            dof_handler,
-            QGauss<dim - 1>(fe.degree + 1),
-            std::map<types::boundary_id, const Function<dim>*>(),
-            present_solution,
-            estimated_error_per_cell);
-
-    GridRefinement::refine_and_coarsen_fixed_number(
-            triangulation, estimated_error_per_cell, 0.3, 0.0);
-    triangulation.prepare_coarsening_and_refinement();
-    SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
-    soltrans.prepare_for_coarsening_and_refinement(present_solution);
-    triangulation.execute_coarsening_and_refinement();*/
-
-    Vector<double> cells_to_refine(triangulation.n_active_cells());
-    cells_to_refine = 1;
-    GridRefinement::refine(triangulation, cells_to_refine, 0);
-    triangulation.prepare_coarsening_and_refinement();
-    SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
-    soltrans.prepare_for_pure_refinement();
-    triangulation.execute_coarsening_and_refinement();
-
-    dof_handler.distribute_dofs(fe);
-    Vector<double> interpolated_solution(dof_handler.n_dofs());
-    soltrans.refine_interpolate(present_solution, interpolated_solution);
-
-    present_solution.reinit(dof_handler.n_dofs());
-    newton_update.reinit(dof_handler.n_dofs());
-    system_rhs.reinit(dof_handler.n_dofs());
-    setup_constraints(stage_i);
-    setup_sparsity_pattern();
-    present_solution = interpolated_solution;
-}
-
-template <int dim>
-void SolveRing<dim>::run() {
-    make_grid();
-    output_grid();
-    std::string checkpoint;
-    bool first_step {true};
-    if (prms.load_from_checkpoint) {
-        first_step = false;
-        load_checkpoint(prms.input_checkpoint);
-    }
-    else {
-        initiate_system();
-    }
-    setup_constraints(prms.starting_stage);
-    setup_sparsity_pattern();
-    for (unsigned int stage_i {prms.starting_stage};
-         stage_i != prms.num_boundary_stages;
-         stage_i++) {
-        update_boundary_function_stage(stage_i);
-        unsigned int num_gamma_iters {prms.num_gamma_iters[stage_i]};
-        for (unsigned int i {0}; i != num_gamma_iters; i++) {
-            gamma = static_cast<double>((i + 1)) / num_gamma_iters;
-            std::string gamma_formatted {format_gamma()};
-            checkpoint = std::to_string(stage_i + 1) + "-" + gamma_formatted;
-            cout << "Stage " << std::to_string(stage_i + 1) << ", gamma "
-                 << gamma_formatted << std::endl;
-            update_constraints();
-            newton_iteration(first_step, checkpoint);
-            output_checkpoint(checkpoint);
-            first_step = false;
-        }
-    }
-
-    checkpoint = "refine-0";
-    output_checkpoint(checkpoint);
-    output_results(checkpoint);
-
-    for (unsigned int i {0}; i != prms.adaptive_refinements; i++) {
-        cout << "Grid refinement " << std::to_string(i + 1) << std::endl;
-        checkpoint = "refine-" + std::to_string(i + 1);
-        refine_mesh(prms.num_boundary_stages - 1);
-        newton_iteration(first_step, checkpoint);
-    }
-
-    checkpoint = "final";
-    output_checkpoint(checkpoint);
-    output_results(checkpoint);
-
-    checkpoint = "moved-mesh";
-    //move_mesh();
-    //output_moved_mesh_results(checkpoint);
 }
 
 int main() {

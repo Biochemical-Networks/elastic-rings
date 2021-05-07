@@ -52,286 +52,10 @@
 #include <deal.II/numerics/vector_tools.h>
 
 #include "modded_periodic_functions.h"
+#include "parameters.h"
+#include "postprocessing.h"
 
 using namespace dealii;
-
-template <int dim>
-struct Params {
-    unsigned int global_refinements;
-    unsigned int adaptive_refinements;
-    double length;
-    double width;
-    unsigned int x_subdivisions;
-    unsigned int y_subdivisions;
-    unsigned int z_subdivisions;
-    unsigned int num_boundary_stages;
-    unsigned int starting_stage;
-    std::vector<unsigned int> num_gamma_iters;
-
-    // There is probably a better way to do this
-    static const unsigned int max_stages {5};
-    std::vector<std::shared_ptr<Functions::ParsedFunction<dim>>>
-            boundary_functions;
-    double E;
-    double nu;
-    unsigned int max_n_line_searches;
-    double alpha_factor;
-    double min_alpha;
-    double alpha_check_factor;
-    double nonlinear_tol;
-    std::string linear_solver;
-    unsigned int max_linear_iters;
-    double linear_tol;
-    double precon_relaxation_param;
-    bool load_from_checkpoint;
-    std::string input_prefix;
-    std::string input_checkpoint;
-    std::string output_prefix;
-    unsigned int gamma_precision;
-
-    Params();
-    static void declare_parameters(ParameterHandler& prm);
-    void parse_parameters(ParameterHandler& prm);
-};
-
-template <int dim>
-Params<dim>::Params() {
-    for (unsigned int i {0}; i != max_stages; i++) {
-        boundary_functions.push_back(
-                std::make_shared<Functions::ParsedFunction<dim>>(dim));
-    }
-    ParameterHandler prm;
-    declare_parameters(prm);
-    prm.parse_input(std::cin);
-    parse_parameters(prm);
-}
-
-template <int dim>
-void Params<dim>::declare_parameters(ParameterHandler& prm) {
-    prm.enter_subsection("Mesh and geometry");
-    {
-        prm.declare_entry(
-                "Number of initial refinements",
-                "2",
-                Patterns::Integer(0),
-                "Number of initial mesh refinements");
-        prm.declare_entry(
-                "Number of final refinements",
-                "0",
-                Patterns::Integer(0),
-                "Number of final mesh refinements");
-        prm.declare_entry(
-                "Beam length", "20", Patterns::Double(0), "Length of beam");
-        prm.declare_entry(
-                "Beam width", "2", Patterns::Double(0), "Width of beam");
-        prm.declare_entry(
-                "x subdivisions",
-                "1",
-                Patterns::Integer(1),
-                "Number of subdivisions along x");
-        prm.declare_entry(
-                "y subdivisions",
-                "1",
-                Patterns::Integer(1),
-                "Number of subdivisions along y");
-        prm.declare_entry(
-                "z subdivisions",
-                "1",
-                Patterns::Integer(1),
-                "Number of subdivisions along z");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Boundary conditions");
-    {
-        prm.declare_entry(
-                "Number of boundary stages",
-                "1",
-                Patterns::Integer(1),
-                "Number of boundary stages");
-        prm.declare_entry(
-                "Starting stage",
-                "0",
-                Patterns::Integer(0),
-                "Boundary stage to start calculations on");
-    }
-    prm.leave_subsection();
-
-    for (unsigned int i {0}; i != max_stages + 1; i++) {
-        prm.enter_subsection("Boundary function stage " + std::to_string(i));
-        {
-            prm.declare_entry(
-                    "Number of boundary increments",
-                    "1",
-                    Patterns::Integer(1),
-                    "Number of boundary increments");
-            Functions::ParsedFunction<dim>::declare_parameters(prm, dim);
-        }
-        prm.leave_subsection();
-    }
-
-    prm.enter_subsection("Physical constants");
-    {
-        prm.declare_entry(
-                "Young's modulus",
-                "2.2e7",
-                Patterns::Double(0),
-                "Young's modulus");
-        prm.declare_entry(
-                "Poisson's ratio",
-                "0.3",
-                Patterns::Double(0),
-                "Poisson's ratio");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Solver");
-    {
-        prm.declare_entry(
-                "Maximum number of line searches",
-                "10",
-                Patterns::Integer(0),
-                "Maximum number of line searches");
-        prm.declare_entry(
-                "Minimum alpha",
-                "1e-5",
-                Patterns::Double(0),
-                "Smallest alpha to try before moving on");
-        prm.declare_entry(
-                "Alpha factor",
-                "0.5",
-                Patterns::Double(0),
-                "Factor to multiply alpha by when trying smaller step");
-        prm.declare_entry(
-                "Alpha check factor",
-                "0.5",
-                Patterns::Double(0),
-                "Larger values require bigger residual decrease for acceptable "
-                "alpha");
-        prm.declare_entry(
-                "Nonlinear tolerance",
-                "1e-12",
-                Patterns::Double(0),
-                "Tolerance for nonlinear solver");
-        prm.declare_entry(
-                "Linear solver",
-                "direct",
-                Patterns::Anything(),
-                "Type of linear solver (direct or iterative)");
-        prm.declare_entry(
-                "Maximum number of linear solver iterations",
-                "10000",
-                Patterns::Integer(1),
-                "Maximum number of linear solver iterations");
-        prm.declare_entry(
-                "Linear tolerance",
-                "1e-12",
-                Patterns::Double(0),
-                "Tolerance for linear solver");
-        prm.declare_entry(
-                "Preconditioner relaxation parameter",
-                "1.0",
-                Patterns::Double(0),
-                "Preconditioner relaxation parameter");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Input and output");
-    {
-        prm.declare_entry(
-                "Load from checkpoint",
-                "false",
-                Patterns::Bool(),
-                "Begin calculation from a checkpoint");
-        prm.declare_entry(
-                "Input filename prefix",
-                "",
-                Patterns::Anything(),
-                "Prefix of the output filename");
-        prm.declare_entry(
-                "Input checkpoint",
-                "",
-                Patterns::Anything(),
-                "Checkpoint of the input file");
-        prm.declare_entry(
-                "Output filename prefix",
-                "",
-                Patterns::Anything(),
-                "Prefix of the output filename");
-        prm.declare_entry(
-                "Gamma precision",
-                "1",
-                Patterns::Integer(0),
-                "Number of digits to include in gamma string");
-    }
-    prm.leave_subsection();
-}
-
-template <int dim>
-void Params<dim>::parse_parameters(ParameterHandler& prm) {
-    prm.enter_subsection("Mesh and geometry");
-    {
-        global_refinements = prm.get_integer("Number of initial refinements");
-        adaptive_refinements = prm.get_integer("Number of final refinements");
-        length = prm.get_double("Beam length");
-        width = prm.get_double("Beam width");
-        x_subdivisions = prm.get_integer("x subdivisions");
-        y_subdivisions = prm.get_integer("y subdivisions");
-        z_subdivisions = prm.get_integer("z subdivisions");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Boundary conditions");
-    {
-        num_boundary_stages = prm.get_integer("Number of boundary stages");
-        starting_stage = prm.get_integer("Starting stage");
-    }
-    prm.leave_subsection();
-
-    for (unsigned int i {0}; i != num_boundary_stages + 1; i++) {
-        prm.enter_subsection("Boundary function stage " + std::to_string(i));
-        {
-            num_gamma_iters.push_back(
-                    prm.get_integer("Number of boundary increments"));
-            boundary_functions[i]->parse_parameters(prm);
-        }
-        prm.leave_subsection();
-    }
-
-    prm.enter_subsection("Physical constants");
-    {
-        E = prm.get_double("Young's modulus");
-        nu = prm.get_double("Poisson's ratio");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Solver");
-    {
-        max_n_line_searches =
-                prm.get_integer("Maximum number of line searches");
-        alpha_factor = prm.get_double("Alpha factor");
-        alpha_check_factor = prm.get_double("Alpha check factor");
-        min_alpha = prm.get_double("Minimum alpha");
-        nonlinear_tol = prm.get_double("Nonlinear tolerance");
-        linear_solver = prm.get("Linear solver");
-        max_linear_iters =
-                prm.get_integer("Maximum number of linear solver iterations");
-        linear_tol = prm.get_double("Linear tolerance");
-        precon_relaxation_param =
-                prm.get_double("Preconditioner relaxation parameter");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Input and output");
-    {
-        load_from_checkpoint = prm.get_bool("Load from checkpoint");
-        input_prefix = prm.get("Input filename prefix");
-        input_checkpoint = prm.get("Input checkpoint");
-        output_prefix = prm.get("Output filename prefix");
-        gamma_precision = prm.get_integer("Gamma precision");
-    }
-    prm.leave_subsection();
-}
 
 template <int dim>
 class ComposedFunction: public Function<dim> {
@@ -363,222 +87,6 @@ void ComposedFunction<dim>::vector_value(
 }
 
 template <int dim>
-class FacesPostprocessor: public DataPostprocessor<dim> {
-  public:
-    FacesPostprocessor(const double lambda, const double mu);
-    virtual void evaluate_vector_field(
-            const DataPostprocessorInputs::Vector<dim>& input_data,
-            std::vector<Vector<double>>& computed_quantities) const;
-    virtual std::vector<std::string> get_names() const;
-    virtual std::vector<
-            DataComponentInterpretation::DataComponentInterpretation>
-    get_data_component_interpretation() const;
-    virtual UpdateFlags get_needed_update_flags() const;
-
-  private:
-    const double lambda;
-    const double mu;
-    const std::vector<std::string> scalar_names {"grad_norm"};
-    const std::vector<std::string> vector_names {
-            "displacement",
-            "material_normal",
-            "material_stress",
-            "spatial_normal",
-            "spatial_stress"};
-};
-
-template <int dim>
-FacesPostprocessor<dim>::FacesPostprocessor(
-        const double lambda,
-        const double mu):
-        lambda {lambda}, mu {mu} {}
-
-template <int dim>
-unsigned int add_scalar_to_computed(
-        unsigned int q_i,
-        unsigned int cq_i,
-        double q,
-        std::vector<Vector<double>>& computed_quantities) {
-    computed_quantities[q_i][cq_i] = q;
-    cq_i++;
-
-    return cq_i;
-}
-
-template <int dim>
-unsigned int add_vector_to_computed(
-        unsigned int q_i,
-        unsigned int cq_i,
-        Tensor<1, dim, double> q,
-        std::vector<Vector<double>>& computed_quantities) {
-
-    for (unsigned int d {0}; d != dim; d++) {
-        computed_quantities[q_i][cq_i] = q[d];
-        cq_i++;
-    }
-
-    return cq_i;
-}
-
-template <int dim>
-void FacesPostprocessor<dim>::evaluate_vector_field(
-        const DataPostprocessorInputs::Vector<dim>& input_data,
-        std::vector<Vector<double>>& computed_quantities) const {
-
-    for (unsigned int q_i {0}; q_i != input_data.normals.size(); q_i++) {
-        Tensor<1, dim, double> displacement;
-        Tensor<2, dim, double> grad_u {};
-        Tensor<2, dim, double> identity_rank2 {};
-        for (unsigned int d {0}; d != dim; d++) {
-            displacement[d] = input_data.solution_values[q_i][d];
-            grad_u[d] = input_data.solution_gradients[q_i][d];
-            identity_rank2[d][d] = 1;
-        }
-        const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
-        const Tensor<2, dim, double> green_lagrange_strain {
-                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
-        const Tensor<2, dim, double> piola_kirchhoff {
-                lambda * trace(green_lagrange_strain) * identity_rank2 +
-                mu * green_lagrange_strain};
-        const Tensor<1, dim, double> material_normal {input_data.normals[q_i]};
-        const Tensor<1, dim, double> material_stress =
-                piola_kirchhoff * material_normal;
-        const Tensor<2, dim, double> deformation_grad {grad_u + identity_rank2};
-        const double deformation_grad_det {determinant(deformation_grad)};
-        const Tensor<1, dim, double> spatial_normal {
-                deformation_grad_det * transpose(invert(deformation_grad)) *
-                material_normal};
-        const Tensor<1, dim, double> spatial_stress {
-                deformation_grad * material_stress};
-        double grad_norm {sqrt(double_contract<0, 0, 1, 1>(grad_u, grad_u))};
-
-        // For now these need to be done in the right order
-        unsigned int cq_i {0};
-        cq_i = add_scalar_to_computed<dim>(
-                q_i, cq_i, grad_norm, computed_quantities);
-        cq_i = add_vector_to_computed<dim>(
-                q_i, cq_i, displacement, computed_quantities);
-        cq_i = add_vector_to_computed<dim>(
-                q_i, cq_i, material_normal, computed_quantities);
-        cq_i = add_vector_to_computed<dim>(
-                q_i, cq_i, material_stress, computed_quantities);
-        cq_i = add_vector_to_computed<dim>(
-                q_i, cq_i, spatial_normal, computed_quantities);
-        cq_i = add_vector_to_computed<dim>(
-                q_i, cq_i, spatial_stress, computed_quantities);
-    }
-}
-
-template <int dim>
-void insert_vector_names(
-        std::vector<std::string>& solution_names,
-        std::string name) {
-    std::vector<std::string> names(dim, name);
-    solution_names.insert(solution_names.end(), names.begin(), names.end());
-}
-
-template <int dim>
-std::vector<std::string> FacesPostprocessor<dim>::get_names() const {
-    std::vector<std::string> solution_names {};
-    for (auto name: scalar_names) {
-        solution_names.push_back(name);
-    }
-    for (auto name: vector_names) {
-        insert_vector_names<dim>(solution_names, name);
-    }
-
-    return solution_names;
-}
-
-template <int dim>
-std::vector<DataComponentInterpretation::DataComponentInterpretation>
-FacesPostprocessor<dim>::get_data_component_interpretation() const {
-    std::vector<DataComponentInterpretation::DataComponentInterpretation>
-            interpretation {};
-    for (unsigned int i {0}; i != scalar_names.size(); i++) {
-        interpretation.push_back(
-                DataComponentInterpretation::component_is_scalar);
-    }
-    for (unsigned int d {0}; d != dim; d++) {
-        for (unsigned int i {0}; i != vector_names.size(); i++) {
-            interpretation.push_back(
-                    DataComponentInterpretation::component_is_part_of_vector);
-        }
-    }
-
-    return interpretation;
-}
-
-template <int dim>
-UpdateFlags FacesPostprocessor<dim>::get_needed_update_flags() const {
-    return update_values | update_gradients | update_quadrature_points |
-           update_normal_vectors;
-}
-
-template <int dim>
-class SpatialStressVectorMovedMeshPostprocess:
-        public DataPostprocessorVector<dim> {
-  public:
-    SpatialStressVectorMovedMeshPostprocess(
-            const double lambda,
-            const double mu);
-    virtual void evaluate_vector_field(
-            const DataPostprocessorInputs::Vector<dim>& input_data,
-            std::vector<Vector<double>>& computed_quantities) const;
-
-  private:
-    const double lambda;
-    const double mu;
-};
-
-template <int dim>
-SpatialStressVectorMovedMeshPostprocess<dim>::
-        SpatialStressVectorMovedMeshPostprocess(
-                const double lambda,
-                const double mu):
-        DataPostprocessorVector<dim>(
-                "spatial_stress",
-                update_gradients | update_normal_vectors),
-        lambda {lambda},
-        mu {mu} {}
-
-template <int dim>
-void SpatialStressVectorMovedMeshPostprocess<dim>::evaluate_vector_field(
-        const DataPostprocessorInputs::Vector<dim>& input_data,
-        std::vector<Vector<double>>& computed_quantities) const {
-
-    for (unsigned int i {0}; i != input_data.normals.size(); i++) {
-        Tensor<2, dim, double> grad_u {};
-        Tensor<2, dim, double> identity_tensor {};
-        for (unsigned int d {0}; d != dim; d++) {
-            grad_u[d] = input_data.solution_gradients[i][d];
-            identity_tensor[d][d] = 1;
-        }
-        const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
-        const Tensor<2, dim, double> green_lagrange_strain_tensor {
-                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
-        const Tensor<2, dim, double> piola_kirchhoff_tensor {
-                lambda * trace(green_lagrange_strain_tensor) * identity_tensor +
-                mu * green_lagrange_strain_tensor};
-        const Tensor<2, dim, double> deformation_grad {
-                grad_u + identity_tensor};
-        const double deformation_grad_det {determinant(deformation_grad)};
-        const Tensor<2, dim, double> cauchy_tensor {
-                deformation_grad * piola_kirchhoff_tensor *
-                transpose(deformation_grad) / deformation_grad_det};
-        const Tensor<1, dim, double> spatial_normal_vector {
-                input_data.normals[i]};
-        const Tensor<1, dim, double> spatial_stress_vector_t =
-                cauchy_tensor * spatial_normal_vector;
-        Vector<double> spatial_stress_vector(dim);
-        for (unsigned int d {0}; d != dim; d++) {
-            spatial_stress_vector[d] = spatial_stress_vector_t[d];
-        }
-        computed_quantities[i] = spatial_stress_vector;
-    }
-}
-
-template <int dim>
 class SolveRing {
   public:
     SolveRing(Params<dim>& prms);
@@ -601,6 +109,7 @@ class SolveRing {
     void center_solution_on_mean();
     void refine_mesh(unsigned int stage_i);
     void move_mesh();
+    void integrate_over_boundaries();
     void output_grid() const;
     void output_checkpoint(const std::string checkpoint) const;
     void output_results(const std::string checkpoint) const;
@@ -679,24 +188,24 @@ void SolveRing<dim>::run() {
         }
     }
 
-    checkpoint = "refine-0";
+    checkpoint = checkpoint =
+            std::to_string(prms.num_boundary_stages + 1) + "_" + "refine-0";
     output_checkpoint(checkpoint);
     output_results(checkpoint);
+    integrate_over_boundaries();
 
     for (unsigned int i {0}; i != prms.adaptive_refinements; i++) {
         cout << "Grid refinement " << std::to_string(i + 1) << std::endl;
         checkpoint = "refine-" + std::to_string(i + 1);
         refine_mesh(prms.num_boundary_stages - 1);
         newton_iteration(first_step, checkpoint);
+        output_checkpoint(checkpoint);
+        integrate_over_boundaries();
     }
 
-    checkpoint = "final";
-    output_checkpoint(checkpoint);
-    output_results(checkpoint);
-
     checkpoint = "moved-mesh";
-    move_mesh();
-    output_moved_mesh_results(checkpoint);
+    // move_mesh();
+    // output_moved_mesh_results(checkpoint);
 }
 
 template <int dim>
@@ -1031,6 +540,112 @@ void SolveRing<dim>::move_mesh() {
             }
         }
     }
+}
+
+template <int dim>
+void SolveRing<dim>::integrate_over_boundaries() {
+    QGauss<dim - 1> quadrature_formula(fe.degree + 1);
+    FEFaceValues<dim> fe_face_values(
+            fe,
+            quadrature_formula,
+            update_values | update_gradients | update_quadrature_points |
+                    update_JxW_values | update_normal_vectors);
+
+    std::vector<Tensor<1, dim, double>> material_force(2);
+    std::vector<Tensor<1, dim, double>> spatial_force(2);
+    std::vector<Tensor<1, dim, double>> ave_material_normal(2);
+    std::vector<Tensor<1, dim, double>> ave_spatial_normal(2);
+    const FEValuesExtractors::Vector displacements(0);
+    for (const auto& cell: dof_handler.active_cell_iterators()) {
+        for (const auto face_i: GeometryInfo<dim>::face_indices()) {
+            const unsigned int boundary_id {cell->face(face_i)->boundary_id()};
+            if (not(boundary_id == 1 or boundary_id == 2)) {
+                continue;
+            }
+            fe_face_values.reinit(cell, face_i);
+            std::vector<Tensor<1, dim, double>> normal_vectors {
+                    fe_face_values.get_normal_vectors()};
+            std::vector<Tensor<2, dim, double>> solution_gradients(
+                    fe_face_values.n_quadrature_points);
+            fe_face_values[displacements].get_function_gradients(
+                    present_solution, solution_gradients);
+            for (const auto q_i: fe_face_values.quadrature_point_indices()) {
+                const Tensor<2, dim, double> grad_u {solution_gradients[q_i]};
+                Tensor<2, dim, double> identity_rank2 {};
+                for (unsigned int d {0}; d != dim; d++) {
+                    identity_rank2[d][d] = 1;
+                }
+                const Tensor<1, dim, double> material_normal {
+                        normal_vectors[q_i]};
+
+                const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
+                const Tensor<2, dim, double> green_lagrange_strain {
+                        0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+                const Tensor<2, dim, double> piola_kirchhoff {
+                        lambda * trace(green_lagrange_strain) * identity_rank2 +
+                        mu * green_lagrange_strain};
+
+                ave_material_normal[boundary_id - 1] += material_normal;
+                material_force[boundary_id - 1] += piola_kirchhoff *
+                                                   material_normal *
+                                                   fe_face_values.JxW(q_i);
+
+                const Tensor<2, dim, double> deformation_grad {
+                        grad_u + identity_rank2};
+                const double deformation_grad_det {
+                        determinant(deformation_grad)};
+                const Tensor<2, dim, double> cauchy {
+                        deformation_grad * piola_kirchhoff *
+                        transpose(deformation_grad) / deformation_grad_det};
+
+                Tensor<1, dim, double> spatial_normal {
+                        transpose(invert(deformation_grad)) * material_normal};
+                spatial_normal /= spatial_normal.norm();
+                ave_spatial_normal[boundary_id - 1] += spatial_normal;
+                spatial_force[boundary_id - 1] +=
+                        cauchy * spatial_normal * fe_face_values.JxW(q_i);
+            }
+        }
+    }
+    ave_material_normal[0] /= ave_material_normal[0].norm();
+    ave_spatial_normal[0] /= ave_spatial_normal[0].norm();
+    ave_material_normal[1] /= ave_material_normal[1].norm();
+    ave_spatial_normal[1] /= ave_spatial_normal[1].norm();
+    const Tensor<1, dim, double> left_material_normal_force = {
+            (material_force[0] * ave_material_normal[0]) *
+            ave_material_normal[0]};
+    const Tensor<1, dim, double> left_material_shear_force = {
+            material_force[0] - left_material_normal_force};
+    const Tensor<1, dim, double> left_spatial_normal_force = {
+            (spatial_force[0] * ave_spatial_normal[0]) * ave_spatial_normal[0]};
+    const Tensor<1, dim, double> left_spatial_shear_force = {
+            spatial_force[0] - left_spatial_normal_force};
+    const Tensor<1, dim, double> right_material_normal_force = {
+            (material_force[1] * ave_material_normal[1]) *
+            ave_material_normal[1]};
+    const Tensor<1, dim, double> right_material_shear_force = {
+            material_force[1] - right_material_normal_force};
+    const Tensor<1, dim, double> right_spatial_normal_force = {
+            (spatial_force[1] * ave_spatial_normal[1]) * ave_spatial_normal[1]};
+    const Tensor<1, dim, double> right_spatial_shear_force = {
+            spatial_force[1] - right_spatial_normal_force};
+
+    cout << "Left boundary material normal force: "
+         << left_material_normal_force.norm() << std::endl;
+    cout << "Right boundary material normal force: "
+         << right_material_normal_force.norm() << std::endl;
+    cout << "Left boundary material shear force: "
+         << left_material_shear_force.norm() << std::endl;
+    cout << "Right boundary material shear force: "
+         << right_material_shear_force.norm() << std::endl;
+    cout << "Left boundary spatial normal force: "
+         << left_spatial_normal_force.norm() << std::endl;
+    cout << "Right boundary spatial normal force: "
+         << right_spatial_normal_force.norm() << std::endl;
+    cout << "Left boundary spatial shear force: "
+         << left_spatial_shear_force.norm() << std::endl;
+    cout << "Right boundary spatial shear force: "
+         << right_spatial_shear_force.norm() << std::endl;
 }
 
 template <int dim>

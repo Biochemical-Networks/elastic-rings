@@ -55,6 +55,10 @@
 #include "parameters.h"
 #include "postprocessing.h"
 
+namespace solve_ring {
+
+using namespace parameters;
+using namespace postprocessing;
 using namespace dealii;
 
 template <int dim>
@@ -69,7 +73,7 @@ class ComposedFunction: public Function<dim> {
 };
 
 template <int dim>
-ComposedFunction<dim>::ComposedFunction() {
+ComposedFunction<dim>::ComposedFunction(): Function<dim>(3) {
     f1 = std::make_shared<Functions::ZeroFunction<dim>>(3);
     f2 = std::make_shared<Functions::ZeroFunction<dim>>(3);
 }
@@ -78,7 +82,9 @@ template <int dim>
 void ComposedFunction<dim>::vector_value(
         const Point<dim>& p,
         Vector<double>& values) const {
-
+    values[0] = 0;
+    values[1] = 0;
+    values[2] = 0;
     Vector<double> values_1(3);
     f1->vector_value(p, values_1);
     Vector<double> values_2(3);
@@ -117,13 +123,17 @@ class SolveRing {
     void load_checkpoint(const std::string checkpoint);
     std::string format_gamma();
 
+    Params<dim>& prms;
+    double lambda;
+    double mu;
+
     Triangulation<dim> triangulation;
     FESystem<dim> fe;
     DoFHandler<dim> dof_handler;
     AffineConstraints<double> zero_constraints;
     AffineConstraints<double> nonzero_constraints;
     Functions::ZeroFunction<dim> zero_function;
-    ComposedFunction<dim> boundary_function;
+    std::vector<ComposedFunction<dim>> boundary_function;
 
     SparsityPattern sparsity_pattern;
     SparseMatrix<double> system_matrix;
@@ -139,18 +149,15 @@ class SolveRing {
             typename DoFHandler<dim, dim>::cell_iterator>>
             face_pairs;
     double gamma;
-
-    Params<dim>& prms;
-    double lambda;
-    double mu;
 };
 
 template <int dim>
 SolveRing<dim>::SolveRing(Params<dim>& prms):
+        prms {prms},
         fe(FE_Q<dim>(1), dim),
         dof_handler(triangulation),
         zero_function {3},
-        prms {prms} {
+        boundary_function(prms.num_boundary_conditions) {
     mu = prms.E / (2 * (1 + prms.nu));
     lambda = prms.E * prms.nu / ((1 + prms.nu) * (1 - 2 * prms.nu));
 }
@@ -171,15 +178,15 @@ void SolveRing<dim>::run() {
     setup_constraints(prms.starting_stage);
     setup_sparsity_pattern();
     for (unsigned int stage_i {prms.starting_stage};
-         stage_i != prms.num_boundary_stages;
+         stage_i != prms.num_boundary_stages + 1;
          stage_i++) {
         update_boundary_function_stage(stage_i);
         unsigned int num_gamma_iters {prms.num_gamma_iters[stage_i]};
         for (unsigned int i {0}; i != num_gamma_iters; i++) {
             gamma = static_cast<double>((i + 1)) / num_gamma_iters;
             std::string gamma_formatted {format_gamma()};
-            checkpoint = std::to_string(stage_i + 1) + "-" + gamma_formatted;
-            cout << "Stage " << std::to_string(stage_i + 1) << ", gamma "
+            checkpoint = std::to_string(stage_i) + "-" + gamma_formatted;
+            cout << "Stage " << std::to_string(stage_i) << ", gamma "
                  << gamma_formatted << std::endl;
             update_constraints();
             newton_iteration(first_step, checkpoint);
@@ -189,7 +196,7 @@ void SolveRing<dim>::run() {
     }
 
     checkpoint = checkpoint =
-            std::to_string(prms.num_boundary_stages + 1) + "_" + "refine-0";
+            std::to_string(prms.num_boundary_stages) + "_" + "refine-0";
     output_checkpoint(checkpoint);
     output_results(checkpoint);
     integrate_over_boundaries();
@@ -197,7 +204,7 @@ void SolveRing<dim>::run() {
     for (unsigned int i {0}; i != prms.adaptive_refinements; i++) {
         cout << "Grid refinement " << std::to_string(i + 1) << std::endl;
         checkpoint = "refine-" + std::to_string(i + 1);
-        refine_mesh(prms.num_boundary_stages - 1);
+        refine_mesh(prms.num_boundary_stages);
         newton_iteration(first_step, checkpoint);
         output_checkpoint(checkpoint);
         integrate_over_boundaries();
@@ -236,26 +243,43 @@ void SolveRing<dim>::initiate_system() {
 
 template <int dim>
 void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
-    const MappingQ1<dim> mapping;
-    dofs_to_supports.resize(dof_handler.n_dofs());
-    DoFTools::map_dofs_to_support_points<dim, dim>(
-            mapping, dof_handler, dofs_to_supports);
-    collect_periodic_faces(dof_handler, 1, 2, 0, face_pairs);
 
     update_boundary_function_stage(stage_i);
     nonzero_constraints.clear();
-    DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-    make_periodicity_constraints<dim, dim, double>(
-            face_pairs,
-            nonzero_constraints,
-            dofs_to_supports,
-            boundary_function);
-    nonzero_constraints.close();
-
     zero_constraints.clear();
-    DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
-    make_periodicity_constraints<dim, dim, double>(
-            face_pairs, zero_constraints, dofs_to_supports, zero_function);
+    DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
+    if (prms.boundary_type == "periodic") {
+        const MappingQ1<dim> mapping;
+        dofs_to_supports.resize(dof_handler.n_dofs());
+        DoFTools::map_dofs_to_support_points<dim, dim>(
+                mapping, dof_handler, dofs_to_supports);
+        collect_periodic_faces(dof_handler, 1, 2, 0, face_pairs);
+        make_periodicity_constraints<dim, dim, double>(
+                face_pairs,
+                nonzero_constraints,
+                dofs_to_supports,
+                boundary_function[0]);
+        DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
+        make_periodicity_constraints<dim, dim, double>(
+                face_pairs, zero_constraints, dofs_to_supports, zero_function);
+    }
+    else if (prms.boundary_type == "dirichlet") {
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 1, boundary_function[0], nonzero_constraints);
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 2, boundary_function[1], nonzero_constraints);
+        VectorTools::interpolate_boundary_values(
+                dof_handler,
+                1,
+                Functions::ZeroFunction<dim>(3),
+                zero_constraints);
+        VectorTools::interpolate_boundary_values(
+                dof_handler,
+                2,
+                Functions::ZeroFunction<dim>(3),
+                zero_constraints);
+    }
+    nonzero_constraints.close();
     zero_constraints.close();
 
     cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
@@ -267,23 +291,35 @@ void SolveRing<dim>::update_constraints() {
     update_boundary_function_gamma();
     nonzero_constraints.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-    make_periodicity_constraints<dim, dim, double>(
-            face_pairs,
-            nonzero_constraints,
-            dofs_to_supports,
-            boundary_function);
+    if (prms.boundary_type == "periodic") {
+        make_periodicity_constraints<dim, dim, double>(
+                face_pairs,
+                nonzero_constraints,
+                dofs_to_supports,
+                boundary_function[0]);
+    }
+    else if (prms.boundary_type == "dirichlet") {
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 1, boundary_function[0], nonzero_constraints);
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 2, boundary_function[1], nonzero_constraints);
+    }
     nonzero_constraints.close();
 }
 
 template <int dim>
 void SolveRing<dim>::update_boundary_function_gamma() {
-    boundary_function.gamma = gamma;
+    for (auto& bf: boundary_function) {
+        bf.gamma = gamma;
+    }
 }
 
 template <int dim>
 void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
-    boundary_function.f1 = prms.boundary_functions[stage_i];
-    boundary_function.f2 = prms.boundary_functions[stage_i + 1];
+    for (unsigned int i {0}; i != prms.num_boundary_conditions; i++) {
+        boundary_function[i].f1 = prms.boundary_functions[stage_i - 1][i];
+        boundary_function[i].f2 = prms.boundary_functions[stage_i][i];
+    }
 }
 
 template <int dim>
@@ -348,11 +384,12 @@ void SolveRing<dim>::assemble(
                     old_solution_gradients[q_index]};
             const Tensor<2, dim, ADNumberType> grad_u_T {transpose(grad_u)};
             const Tensor<2, dim, ADNumberType> green_lagrange_strain_tensor {
-                    0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+                    0.5 * (grad_u + grad_u_T + grad_u_T * grad_u)};
             ADNumberType t1 = lambda / 2 *
                               std::pow(trace(green_lagrange_strain_tensor), 2);
-            ADNumberType t2 = mu * trace(green_lagrange_strain_tensor *
-                                         green_lagrange_strain_tensor);
+            ADNumberType t2 = mu * double_contract<0, 0, 1, 1>(
+                                           green_lagrange_strain_tensor,
+                                           green_lagrange_strain_tensor);
             ADNumberType pi {t1 + t2};
             energy_ad += pi * fe_values.JxW(q_index);
         }
@@ -482,7 +519,9 @@ void SolveRing<dim>::newton_iteration(
                       << "  energy: " << present_energy << std::endl;
             last_res = current_res;
             ++line_search_n;
-            center_solution_on_mean();
+            if (prms.boundary_type == "periodic") {
+                center_solution_on_mean();
+            }
         }
     }
     output_results(checkpoint);
@@ -571,19 +610,16 @@ void SolveRing<dim>::integrate_over_boundaries() {
                     present_solution, solution_gradients);
             for (const auto q_i: fe_face_values.quadrature_point_indices()) {
                 const Tensor<2, dim, double> grad_u {solution_gradients[q_i]};
-                Tensor<2, dim, double> identity_rank2 {};
-                for (unsigned int d {0}; d != dim; d++) {
-                    identity_rank2[d][d] = 1;
-                }
                 const Tensor<1, dim, double> material_normal {
                         normal_vectors[q_i]};
 
                 const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
                 const Tensor<2, dim, double> green_lagrange_strain {
-                        0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+                        0.5 * (grad_u + grad_u_T + grad_u_T * grad_u)};
                 const Tensor<2, dim, double> piola_kirchhoff {
-                        lambda * trace(green_lagrange_strain) * identity_rank2 +
-                        mu * green_lagrange_strain};
+                        lambda * trace(green_lagrange_strain) *
+                                unit_symmetric_tensor<dim>() +
+                        2 * mu * green_lagrange_strain};
 
                 ave_material_normal[boundary_id - 1] += material_normal;
                 material_force[boundary_id - 1] += piola_kirchhoff *
@@ -591,7 +627,7 @@ void SolveRing<dim>::integrate_over_boundaries() {
                                                    fe_face_values.JxW(q_i);
 
                 const Tensor<2, dim, double> deformation_grad {
-                        grad_u + identity_rank2};
+                        grad_u + unit_symmetric_tensor<dim>()};
                 const double deformation_grad_det {
                         determinant(deformation_grad)};
                 const Tensor<2, dim, double> cauchy {
@@ -600,10 +636,11 @@ void SolveRing<dim>::integrate_over_boundaries() {
 
                 Tensor<1, dim, double> spatial_normal {
                         transpose(invert(deformation_grad)) * material_normal};
+                spatial_force[boundary_id - 1] += cauchy * spatial_normal *
+                                                  fe_face_values.JxW(q_i) *
+                                                  deformation_grad_det;
                 spatial_normal /= spatial_normal.norm();
                 ave_spatial_normal[boundary_id - 1] += spatial_normal;
-                spatial_force[boundary_id - 1] +=
-                        cauchy * spatial_normal * fe_face_values.JxW(q_i);
             }
         }
     }
@@ -732,8 +769,13 @@ std::string SolveRing<dim>::format_gamma() {
     stream_obj << gamma;
     return stream_obj.str();
 }
+} // namespace solve_ring
 
 int main() {
+    using namespace dealii;
+    using namespace parameters;
+    using namespace postprocessing;
+    using namespace solve_ring;
     deallog.depth_console(0);
     Params<3> prms {};
     SolveRing<3> ring_solver {prms};

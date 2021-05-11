@@ -8,6 +8,8 @@
 #include <deal.II/base/parsed_function.h>
 #include <deal.II/base/utilities.h>
 
+namespace parameters {
+
 using namespace dealii;
 
 template <int dim>
@@ -20,12 +22,15 @@ struct Params {
     unsigned int y_subdivisions;
     unsigned int z_subdivisions;
     unsigned int num_boundary_stages;
+    unsigned int num_boundary_conditions;
     unsigned int starting_stage;
+    std::string boundary_type;
     std::vector<unsigned int> num_gamma_iters;
 
     // There is probably a better way to do this
     static const unsigned int max_stages {5};
-    std::vector<std::shared_ptr<Functions::ParsedFunction<dim>>>
+    static const unsigned int max_conditions {2};
+    std::vector<std::vector<std::shared_ptr<Functions::ParsedFunction<dim>>>>
             boundary_functions;
     double E;
     double nu;
@@ -52,8 +57,11 @@ struct Params {
 template <int dim>
 Params<dim>::Params() {
     for (unsigned int i {0}; i != max_stages; i++) {
-        boundary_functions.push_back(
-                std::make_shared<Functions::ParsedFunction<dim>>(dim));
+        boundary_functions.push_back({});
+        for (unsigned int j {0}; j != max_conditions; j++) {
+            boundary_functions[i].push_back(
+                    std::make_shared<Functions::ParsedFunction<dim>>(dim));
+        }
     }
     ParameterHandler prm;
     declare_parameters(prm);
@@ -105,10 +113,20 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 Patterns::Integer(1),
                 "Number of boundary stages");
         prm.declare_entry(
+                "Number of boundary conditions",
+                "1",
+                Patterns::Integer(1),
+                "Number of boundary conditions");
+        prm.declare_entry(
                 "Starting stage",
-                "0",
+                "1",
                 Patterns::Integer(0),
                 "Boundary stage to start calculations on");
+        prm.declare_entry(
+                "Boundary type",
+                "periodic",
+                Patterns::Anything(),
+                "Tpype of boundary condition (periodic or dirichlet)");
     }
     prm.leave_subsection();
 
@@ -120,7 +138,14 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                     "1",
                     Patterns::Integer(1),
                     "Number of boundary increments");
-            Functions::ParsedFunction<dim>::declare_parameters(prm, dim);
+            for (unsigned int j {0}; j != max_conditions + 1; j++) {
+                prm.enter_subsection("Boundary condition " + std::to_string(j));
+                {
+                    Functions::ParsedFunction<dim>::declare_parameters(
+                            prm, dim);
+                }
+                prm.leave_subsection();
+            }
         }
         prm.leave_subsection();
     }
@@ -239,7 +264,9 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Boundary conditions");
     {
         num_boundary_stages = prm.get_integer("Number of boundary stages");
+        num_boundary_conditions = prm.get_integer("Number of boundary conditions");
         starting_stage = prm.get_integer("Starting stage");
+        boundary_type = prm.get("Boundary type");
     }
     prm.leave_subsection();
 
@@ -248,44 +275,49 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         {
             num_gamma_iters.push_back(
                     prm.get_integer("Number of boundary increments"));
-            boundary_functions[i]->parse_parameters(prm);
+            for (unsigned int j {0}; j != num_boundary_conditions; j++) {
+                prm.enter_subsection("Boundary condition " + std::to_string(j));
+                boundary_functions[i][j]->parse_parameters(prm);
+                prm.leave_subsection();
+            }
+            prm.leave_subsection();
+        }
+
+        prm.enter_subsection("Physical constants");
+        {
+            E = prm.get_double("Young's modulus");
+            nu = prm.get_double("Poisson's ratio");
+        }
+        prm.leave_subsection();
+
+        prm.enter_subsection("Solver");
+        {
+            max_n_line_searches =
+                    prm.get_integer("Maximum number of line searches");
+            alpha_factor = prm.get_double("Alpha factor");
+            alpha_check_factor = prm.get_double("Alpha check factor");
+            min_alpha = prm.get_double("Minimum alpha");
+            nonlinear_tol = prm.get_double("Nonlinear tolerance");
+            linear_solver = prm.get("Linear solver");
+            max_linear_iters = prm.get_integer(
+                    "Maximum number of linear solver iterations");
+            linear_tol = prm.get_double("Linear tolerance");
+            precon_relaxation_param =
+                    prm.get_double("Preconditioner relaxation parameter");
+        }
+        prm.leave_subsection();
+
+        prm.enter_subsection("Input and output");
+        {
+            load_from_checkpoint = prm.get_bool("Load from checkpoint");
+            input_prefix = prm.get("Input filename prefix");
+            input_checkpoint = prm.get("Input checkpoint");
+            output_prefix = prm.get("Output filename prefix");
+            gamma_precision = prm.get_integer("Gamma precision");
         }
         prm.leave_subsection();
     }
-
-    prm.enter_subsection("Physical constants");
-    {
-        E = prm.get_double("Young's modulus");
-        nu = prm.get_double("Poisson's ratio");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Solver");
-    {
-        max_n_line_searches =
-                prm.get_integer("Maximum number of line searches");
-        alpha_factor = prm.get_double("Alpha factor");
-        alpha_check_factor = prm.get_double("Alpha check factor");
-        min_alpha = prm.get_double("Minimum alpha");
-        nonlinear_tol = prm.get_double("Nonlinear tolerance");
-        linear_solver = prm.get("Linear solver");
-        max_linear_iters =
-                prm.get_integer("Maximum number of linear solver iterations");
-        linear_tol = prm.get_double("Linear tolerance");
-        precon_relaxation_param =
-                prm.get_double("Preconditioner relaxation parameter");
-    }
-    prm.leave_subsection();
-
-    prm.enter_subsection("Input and output");
-    {
-        load_from_checkpoint = prm.get_bool("Load from checkpoint");
-        input_prefix = prm.get("Input filename prefix");
-        input_checkpoint = prm.get("Input checkpoint");
-        output_prefix = prm.get("Output filename prefix");
-        gamma_precision = prm.get_integer("Gamma precision");
-    }
-    prm.leave_subsection();
 }
+} // namespace parameters
 
 #endif

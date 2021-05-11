@@ -16,6 +16,8 @@
 #include <deal.II/numerics/data_out_faces.h>
 #include <deal.II/numerics/data_postprocessor.h>
 
+namespace postprocessing {
+
 using namespace dealii;
 
 template <int dim>
@@ -84,26 +86,25 @@ void FacesPostprocessor<dim>::evaluate_vector_field(
     for (unsigned int q_i {0}; q_i != input_data.normals.size(); q_i++) {
         Tensor<1, dim, double> displacement;
         Tensor<2, dim, double> grad_u {};
-        Tensor<2, dim, double> identity_rank2 {};
         for (unsigned int d {0}; d != dim; d++) {
             displacement[d] = input_data.solution_values[q_i][d];
             grad_u[d] = input_data.solution_gradients[q_i][d];
-            identity_rank2[d][d] = 1;
-
         }
         const Tensor<1, dim, double> material_normal {input_data.normals[q_i]};
 
         const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
         const Tensor<2, dim, double> green_lagrange_strain {
-                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+                0.5 * (grad_u + grad_u_T + grad_u_T * grad_u)};
         const Tensor<2, dim, double> piola_kirchhoff {
-                lambda * trace(green_lagrange_strain) * identity_rank2 +
-                mu * green_lagrange_strain};
+                lambda * trace(green_lagrange_strain) *
+                        unit_symmetric_tensor<dim>() +
+                2 * mu * green_lagrange_strain};
 
         const Tensor<1, dim, double> material_stress =
                 piola_kirchhoff * material_normal;
 
-        const Tensor<2, dim, double> deformation_grad {grad_u + identity_rank2};
+        const Tensor<2, dim, double> deformation_grad {
+                grad_u + unit_symmetric_tensor<dim>()};
         const double deformation_grad_det {determinant(deformation_grad)};
         const Tensor<2, dim, double> cauchy {
                 deformation_grad * piola_kirchhoff *
@@ -219,10 +220,10 @@ void SpatialStressVectorMovedMeshPostprocess<dim>::evaluate_vector_field(
         }
         const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
         const Tensor<2, dim, double> green_lagrange_strain_tensor {
-                0.5 * (grad_u + grad_u_T + grad_u * grad_u_T)};
+                0.5 * (grad_u + grad_u_T + grad_u_T * grad_u)};
         const Tensor<2, dim, double> piola_kirchhoff_tensor {
                 lambda * trace(green_lagrange_strain_tensor) * identity_tensor +
-                mu * green_lagrange_strain_tensor};
+                2 * mu * green_lagrange_strain_tensor};
         const Tensor<2, dim, double> deformation_grad {
                 grad_u + identity_tensor};
         const double deformation_grad_det {determinant(deformation_grad)};
@@ -240,5 +241,6 @@ void SpatialStressVectorMovedMeshPostprocess<dim>::evaluate_vector_field(
         computed_quantities[i] = spatial_stress_vector;
     }
 }
+} // namespace postprocessing
 
 #endif

@@ -1,5 +1,5 @@
 #ifndef parameters_h
-#define parameteres_h
+#define parameters_h
 
 #include <vector>
 
@@ -32,6 +32,9 @@ struct Params {
     static const unsigned int max_conditions {2};
     std::vector<std::vector<std::shared_ptr<Functions::ParsedFunction<dim>>>>
             boundary_functions;
+    std::vector<double> left_boundaries {};
+    std::vector<double> right_boundaries {};
+    std::vector<bool> use_current_config {};
     double E;
     double nu;
     unsigned int max_n_line_searches;
@@ -126,7 +129,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Boundary type",
                 "periodic",
                 Patterns::Anything(),
-                "Tpype of boundary condition (periodic or dirichlet)");
+                "Tpype of boundary condition");
     }
     prm.leave_subsection();
 
@@ -138,6 +141,21 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                     "1",
                     Patterns::Integer(1),
                     "Number of boundary increments");
+            prm.declare_entry(
+                    "Left boundary",
+                    "0",
+                    Patterns::Double(),
+                    "Left edge of boundary");
+            prm.declare_entry(
+                    "Right boundary",
+                    "0",
+                    Patterns::Double(),
+                    "Right edge of boundary");
+            prm.declare_entry(
+                    "Use current configuration",
+                    "false",
+                    Patterns::Bool(),
+                    "Set the boundary condition to the current configuration");
             for (unsigned int j {0}; j != max_conditions + 1; j++) {
                 prm.enter_subsection("Boundary condition " + std::to_string(j));
                 {
@@ -264,7 +282,8 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Boundary conditions");
     {
         num_boundary_stages = prm.get_integer("Number of boundary stages");
-        num_boundary_conditions = prm.get_integer("Number of boundary conditions");
+        num_boundary_conditions =
+                prm.get_integer("Number of boundary conditions");
         starting_stage = prm.get_integer("Starting stage");
         boundary_type = prm.get("Boundary type");
     }
@@ -275,6 +294,9 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         {
             num_gamma_iters.push_back(
                     prm.get_integer("Number of boundary increments"));
+            left_boundaries.push_back(prm.get_double("Left boundary"));
+            right_boundaries.push_back(prm.get_double("Right boundary"));
+            use_current_config.push_back(prm.get_bool("Use current configuration"));
             for (unsigned int j {0}; j != num_boundary_conditions; j++) {
                 prm.enter_subsection("Boundary condition " + std::to_string(j));
                 boundary_functions[i][j]->parse_parameters(prm);

@@ -103,6 +103,7 @@ class SolveRing {
     void initiate_system();
     void setup_constraints(unsigned int stage_i);
     void update_constraints();
+    void setup_side_to_side_periodic_constraints();
     void update_boundary_function_gamma();
     void update_boundary_function_stage(unsigned int stage_i);
     void setup_sparsity_pattern();
@@ -134,6 +135,7 @@ class SolveRing {
     AffineConstraints<double> nonzero_constraints;
     Functions::ZeroFunction<dim> zero_function;
     std::vector<ComposedFunction<dim>> boundary_function;
+    std::pair<double, double> boundary {};
 
     SparsityPattern sparsity_pattern;
     SparseMatrix<double> system_matrix;
@@ -243,12 +245,12 @@ void SolveRing<dim>::initiate_system() {
 
 template <int dim>
 void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
-
     update_boundary_function_stage(stage_i);
     nonzero_constraints.clear();
     zero_constraints.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-    if (prms.boundary_type == "periodic") {
+    DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
+    if (prms.boundary_type == "periodic_left_right") {
         const MappingQ1<dim> mapping;
         dofs_to_supports.resize(dof_handler.n_dofs());
         DoFTools::map_dofs_to_support_points<dim, dim>(
@@ -259,11 +261,17 @@ void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
                 nonzero_constraints,
                 dofs_to_supports,
                 boundary_function[0]);
-        DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
         make_periodicity_constraints<dim, dim, double>(
                 face_pairs, zero_constraints, dofs_to_supports, zero_function);
     }
-    else if (prms.boundary_type == "dirichlet") {
+    else if (prms.boundary_type == "periodic_bottom_left_top_right") {
+        const MappingQ1<dim> mapping;
+        dofs_to_supports.resize(dof_handler.n_dofs());
+        DoFTools::map_dofs_to_support_points<dim, dim>(
+                mapping, dof_handler, dofs_to_supports);
+        setup_side_to_side_periodic_constraints();
+    }
+    else if (prms.boundary_type == "dirichlet_left_right") {
         VectorTools::interpolate_boundary_values(
                 dof_handler, 1, boundary_function[0], nonzero_constraints);
         VectorTools::interpolate_boundary_values(
@@ -287,18 +295,73 @@ void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
 }
 
 template <int dim>
+void SolveRing<dim>::setup_side_to_side_periodic_constraints() {
+    double offset = prms.length - boundary.first - boundary.second;
+    for (auto& left_cell: dof_handler.active_cell_iterators()) {
+        for (auto& left_face: left_cell->face_iterators()) {
+            if (not(boundary.first <= left_face->center()(0) and
+                    left_face->center()(0) <= boundary.second and
+                    left_face->center()(1) < 1e-12)) {
+                continue;
+            }
+            for (auto& right_cell: dof_handler.active_cell_iterators()) {
+                for (auto& right_face: right_cell->face_iterators()) {
+                    if (not(prms.length - boundary.second <=
+                                    right_face->center()(0) and
+                            right_face->center()(0) <=
+                                    prms.length - boundary.first and
+                            std::fabs(right_face->center()(1) - prms.width) <
+                                    1e-12)) {
+                        continue;
+                    }
+                    if (std::fabs(
+                                right_face->center()(0) -
+                                left_face->center()(0) - offset) < 1e-12 and
+                        std::fabs(
+                                right_face->center()(2) -
+                                left_face->center()(2)) < 1e-12) {
+                        cout << "Left face: " << left_face->center()(0) << " "
+                             << left_face->center()(1) << " "
+                             << left_face->center()(2) << std::endl;
+                        cout << "Right face: " << right_face->center()(0) << " "
+                             << right_face->center()(1) << " "
+                             << right_face->center()(2) << std::endl
+                             << std::endl;
+                        make_periodicity_constraints(
+                                left_face,
+                                right_face,
+                                nonzero_constraints,
+                                dofs_to_supports,
+                                boundary_function[0]);
+                        make_periodicity_constraints(
+                                left_face,
+                                right_face,
+                                zero_constraints,
+                                dofs_to_supports,
+                                zero_function);
+                    }
+                }
+            }
+        }
+    }
+}
+
+template <int dim>
 void SolveRing<dim>::update_constraints() {
     update_boundary_function_gamma();
     nonzero_constraints.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-    if (prms.boundary_type == "periodic") {
+    if (prms.boundary_type == "periodic_left_right") {
         make_periodicity_constraints<dim, dim, double>(
                 face_pairs,
                 nonzero_constraints,
                 dofs_to_supports,
                 boundary_function[0]);
     }
-    else if (prms.boundary_type == "dirichlet") {
+    if (prms.boundary_type == "periodic_bottom_left_top_right") {
+        setup_side_to_side_periodic_constraints();
+    }
+    else if (prms.boundary_type == "dirichlet_left_right") {
         VectorTools::interpolate_boundary_values(
                 dof_handler, 1, boundary_function[0], nonzero_constraints);
         VectorTools::interpolate_boundary_values(
@@ -320,6 +383,8 @@ void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
         boundary_function[i].f1 = prms.boundary_functions[stage_i - 1][i];
         boundary_function[i].f2 = prms.boundary_functions[stage_i][i];
     }
+    boundary.first = prms.left_boundaries[stage_i];
+    boundary.second = prms.right_boundaries[stage_i];
 }
 
 template <int dim>
@@ -590,7 +655,8 @@ void SolveRing<dim>::integrate_over_boundaries() {
             update_values | update_gradients | update_quadrature_points |
                     update_JxW_values | update_normal_vectors);
 
-    std::vector<Tensor<1, dim, double>> material_force(2);
+    std::vector<Tensor<1, dim, double>> first_pseudo_material_force(2);
+    std::vector<Tensor<1, dim, double>> second_pseudo_material_force(2);
     std::vector<Tensor<1, dim, double>> spatial_force(2);
     std::vector<Tensor<1, dim, double>> ave_material_normal(2);
     std::vector<Tensor<1, dim, double>> ave_spatial_normal(2);
@@ -616,30 +682,40 @@ void SolveRing<dim>::integrate_over_boundaries() {
                 const Tensor<2, dim, double> grad_u_T {transpose(grad_u)};
                 const Tensor<2, dim, double> green_lagrange_strain {
                         0.5 * (grad_u + grad_u_T + grad_u_T * grad_u)};
-                const Tensor<2, dim, double> piola_kirchhoff {
-                        lambda * trace(green_lagrange_strain) *
-                                unit_symmetric_tensor<dim>() +
-                        2 * mu * green_lagrange_strain};
-
-                ave_material_normal[boundary_id - 1] += material_normal;
-                material_force[boundary_id - 1] += piola_kirchhoff *
-                                                   material_normal *
-                                                   fe_face_values.JxW(q_i);
 
                 const Tensor<2, dim, double> deformation_grad {
                         grad_u + unit_symmetric_tensor<dim>()};
                 const double deformation_grad_det {
                         determinant(deformation_grad)};
+
+                const Tensor<2, dim, double> second_piola_kirchhoff {
+                        lambda * trace(green_lagrange_strain) *
+                                unit_symmetric_tensor<dim>() +
+                        2 * mu * green_lagrange_strain};
+                const Tensor<2, dim, double> first_piola_kirchhoff {
+                        deformation_grad * second_piola_kirchhoff};
+
+                ave_material_normal[boundary_id - 1] += material_normal;
+                second_pseudo_material_force[boundary_id - 1] +=
+                        second_piola_kirchhoff * material_normal *
+                        fe_face_values.JxW(q_i);
+                first_pseudo_material_force[boundary_id - 1] +=
+                        first_piola_kirchhoff * material_normal *
+                        fe_face_values.JxW(q_i);
+
                 const Tensor<2, dim, double> cauchy {
-                        deformation_grad * piola_kirchhoff *
+                        deformation_grad * second_piola_kirchhoff *
                         transpose(deformation_grad) / deformation_grad_det};
 
                 Tensor<1, dim, double> spatial_normal {
                         transpose(invert(deformation_grad)) * material_normal};
+                spatial_normal /= spatial_normal.norm();
+                double da_dA {
+                        deformation_grad_det * spatial_normal *
+                        transpose(invert(deformation_grad)) * material_normal};
                 spatial_force[boundary_id - 1] += cauchy * spatial_normal *
                                                   fe_face_values.JxW(q_i) *
-                                                  deformation_grad_det;
-                spatial_normal /= spatial_normal.norm();
+                                                  da_dA;
                 ave_spatial_normal[boundary_id - 1] += spatial_normal;
             }
         }
@@ -648,33 +724,77 @@ void SolveRing<dim>::integrate_over_boundaries() {
     ave_spatial_normal[0] /= ave_spatial_normal[0].norm();
     ave_material_normal[1] /= ave_material_normal[1].norm();
     ave_spatial_normal[1] /= ave_spatial_normal[1].norm();
-    const Tensor<1, dim, double> left_material_normal_force = {
-            (material_force[0] * ave_material_normal[0]) *
+
+    const Tensor<1, dim, double> left_second_pseudo_material_normal_force = {
+            (second_pseudo_material_force[0] * ave_material_normal[0]) *
             ave_material_normal[0]};
-    const Tensor<1, dim, double> left_material_shear_force = {
-            material_force[0] - left_material_normal_force};
+    const Tensor<1, dim, double> left_second_pseudo_material_shear_force = {
+            second_pseudo_material_force[0] -
+            left_second_pseudo_material_normal_force};
+
+    const Tensor<1, dim, double> left_first_pseudo_material_normal_force = {
+            (first_pseudo_material_force[0] * ave_material_normal[0]) *
+            ave_material_normal[0]};
+    const Tensor<1, dim, double> left_first_pseudo_material_shear_force = {
+            first_pseudo_material_force[0] -
+            left_first_pseudo_material_normal_force};
+
     const Tensor<1, dim, double> left_spatial_normal_force = {
             (spatial_force[0] * ave_spatial_normal[0]) * ave_spatial_normal[0]};
     const Tensor<1, dim, double> left_spatial_shear_force = {
             spatial_force[0] - left_spatial_normal_force};
-    const Tensor<1, dim, double> right_material_normal_force = {
-            (material_force[1] * ave_material_normal[1]) *
+
+    const Tensor<1, dim, double> right_second_pseudo_material_normal_force = {
+            (second_pseudo_material_force[1] * ave_material_normal[1]) *
             ave_material_normal[1]};
-    const Tensor<1, dim, double> right_material_shear_force = {
-            material_force[1] - right_material_normal_force};
+    const Tensor<1, dim, double> right_second_pseudo_material_shear_force = {
+            second_pseudo_material_force[1] -
+            right_second_pseudo_material_normal_force};
+
+    const Tensor<1, dim, double> right_first_pseudo_material_normal_force = {
+            (first_pseudo_material_force[1] * ave_material_normal[1]) *
+            ave_material_normal[1]};
+    const Tensor<1, dim, double> right_first_pseudo_material_shear_force = {
+            first_pseudo_material_force[1] -
+            right_first_pseudo_material_normal_force};
+
     const Tensor<1, dim, double> right_spatial_normal_force = {
             (spatial_force[1] * ave_spatial_normal[1]) * ave_spatial_normal[1]};
     const Tensor<1, dim, double> right_spatial_shear_force = {
             spatial_force[1] - right_spatial_normal_force};
 
-    cout << "Left boundary material normal force: "
-         << left_material_normal_force.norm() << std::endl;
-    cout << "Right boundary material normal force: "
-         << right_material_normal_force.norm() << std::endl;
-    cout << "Left boundary material shear force: "
-         << left_material_shear_force.norm() << std::endl;
-    cout << "Right boundary material shear force: "
-         << right_material_shear_force.norm() << std::endl;
+    cout << "Left boundary second pseudo material force: "
+         << second_pseudo_material_force[0].norm() << std::endl;
+    cout << "Right boundary second pseudo material force: "
+         << second_pseudo_material_force[1].norm() << std::endl;
+    cout << "Left boundary second pseudo material normal force: "
+         << left_second_pseudo_material_normal_force.norm() << std::endl;
+    cout << "Right boundary second pseudo material normal force: "
+         << right_second_pseudo_material_normal_force.norm() << std::endl;
+    cout << "Left boundary second pseudo material shear force: "
+         << left_second_pseudo_material_shear_force.norm() << std::endl;
+    cout << "Right boundary second pseudo material shear force: "
+         << right_second_pseudo_material_shear_force.norm() << std::endl;
+    cout << std::endl;
+
+    cout << "Left boundary first pseudo material force: "
+         << first_pseudo_material_force[0].norm() << std::endl;
+    cout << "Right boundary first pseudo material force: "
+         << first_pseudo_material_force[1].norm() << std::endl;
+    cout << "Left boundary first pseudo material normal force: "
+         << left_first_pseudo_material_normal_force.norm() << std::endl;
+    cout << "Right boundary first pseudo material normal force: "
+         << right_first_pseudo_material_normal_force.norm() << std::endl;
+    cout << "Left boundary first pseudo material shear force: "
+         << left_first_pseudo_material_shear_force.norm() << std::endl;
+    cout << "Right boundary first pseudo material shear force: "
+         << right_first_pseudo_material_shear_force.norm() << std::endl;
+    cout << std::endl;
+
+    cout << "Left boundary spatial force: " << spatial_force[0].norm()
+         << std::endl;
+    cout << "Right boundary spatial force: " << spatial_force[1].norm()
+         << std::endl;
     cout << "Left boundary spatial normal force: "
          << left_spatial_normal_force.norm() << std::endl;
     cout << "Right boundary spatial normal force: "
@@ -683,6 +803,7 @@ void SolveRing<dim>::integrate_over_boundaries() {
          << left_spatial_shear_force.norm() << std::endl;
     cout << "Right boundary spatial shear force: "
          << right_spatial_shear_force.norm() << std::endl;
+    cout << std::endl;
 }
 
 template <int dim>

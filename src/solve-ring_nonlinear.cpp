@@ -103,20 +103,20 @@ class SolveRing {
     void initiate_system();
     void setup_constraints(unsigned int stage_i);
     void update_constraints();
+    void update_boundary_function_gamma();
+    void update_boundary_function_stage(unsigned int stage_i);
     void setup_side_to_side_periodic_constraints();
     template <typename FaceIterator>
     void set_overlap_constraints(
             FaceIterator& left_face,
             FaceIterator& right_face);
-    void update_boundary_function_gamma();
-    void update_boundary_function_stage(unsigned int stage_i);
     void setup_sparsity_pattern();
     void assemble(const bool initial_step, const bool assemble_matrix);
     void assemble_system(const bool initial_step);
     void assemble_rhs(const bool initial_step);
     void solve(const bool initial_step);
-    double calc_residual_norm();
     void newton_iteration(bool first_step, const std::string checkpoint);
+    double calc_residual_norm();
     void center_solution_on_mean();
     void center_solution_on_vertex();
     void refine_mesh(unsigned int stage_i);
@@ -318,81 +318,90 @@ void SolveRing<dim>::setup_constraints(unsigned int stage_i) {
          << std::endl;
 }
 
-struct VectorDoFPairs {
-    types::global_dof_index left_X;
-    types::global_dof_index left_Y;
-    types::global_dof_index left_Z;
-    types::global_dof_index right_X;
-    types::global_dof_index right_Y;
-    types::global_dof_index right_Z;
-
-    bool operator<(const VectorDoFPairs& a) const {
-        bool less_than {false};
-        if (this->left_X < a.left_X) {
-            less_than = true;
-        }
-        else if (this->left_X == a.left_X) {
-            if (this->left_Y < a.left_Y) {
-                less_than = true;
-            }
-            else if (this->left_Z == a.left_Z) {
-                if (this->left_Z < a.left_Z) {
-                    less_than = true;
-                }
-            }
-        }
-
-        return less_than;
+template <int dim>
+void SolveRing<dim>::update_constraints() {
+    update_boundary_function_gamma();
+    nonzero_constraints.clear();
+    DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
+    if (prms.boundary_type == "periodic_left_right") {
+        make_periodicity_constraints<dim, dim, double>(
+                face_pairs,
+                nonzero_constraints,
+                dofs_to_supports,
+                boundary_function[0]);
     }
-};
+    else if (prms.boundary_type == "periodic_bottom_left_top_right") {
+        setup_side_to_side_periodic_constraints();
+    }
+    else if (prms.boundary_type == "dirichlet_left_right") {
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 1, boundary_function[0], nonzero_constraints);
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 2, boundary_function[1], nonzero_constraints);
+    }
+    else if (prms.boundary_type == "dirichlet_left_periodic_top_right") {
+        VectorTools::interpolate_boundary_values(
+                dof_handler, 1, boundary_function[0], nonzero_constraints);
+        setup_side_to_side_periodic_constraints();
+    }
+    nonzero_constraints.close();
+}
 
-void insert_vector_dof_pairs(
-        const std::vector<types::global_dof_index> local_left_dofs,
-        const std::vector<types::global_dof_index> local_right_dofs,
-        std::set<VectorDoFPairs>& dof_pairs) {
-    const size_t num_vector_dof_pairs {local_left_dofs.size()};
-    for (size_t i {0}; i != num_vector_dof_pairs; i += 3) {
-        VectorDoFPairs vector_dof_pairs {
-                local_left_dofs[0],
-                local_left_dofs[1],
-                local_left_dofs[2],
-                local_right_dofs[0],
-                local_right_dofs[0],
-                local_right_dofs[0]};
-        dof_pairs.insert(vector_dof_pairs);
+template <int dim>
+void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
+    for (unsigned int i {0}; i != prms.num_boundary_conditions; i++) {
+        boundary_function[i].f1 = prms.boundary_functions[stage_i - 1][i];
+        boundary_function[i].f2 = prms.boundary_functions[stage_i][i];
+    }
+    boundary.first = prms.left_boundaries[stage_i];
+    boundary.second = prms.right_boundaries[stage_i];
+}
+
+template <int dim>
+void SolveRing<dim>::update_boundary_function_gamma() {
+    for (auto& bf: boundary_function) {
+        bf.gamma = gamma;
     }
 }
 
-std::vector<double> average_face_offset(
-        const std::vector<types::global_dof_index> local_left_dofs,
-        const std::vector<types::global_dof_index> local_right_dofs,
-        const Vector<double> present_solution) {
+template <int dim>
+void SolveRing<dim>::setup_side_to_side_periodic_constraints() {
+    double material_offset = prms.beam_X - boundary.first - boundary.second;
+    for (auto& left_cell: dof_handler.active_cell_iterators()) {
+        for (auto& left_face: left_cell->face_iterators()) {
+            double left_X {left_face->center()(0)};
+            double left_Y {left_face->center()(1)};
+            double left_Z {left_face->center()(2)};
+            if (not(boundary.first <= left_X and left_X <= boundary.second and
+                    left_Y < 1e-12)) {
+                continue;
+            }
+            for (auto& right_cell: dof_handler.active_cell_iterators()) {
+                for (auto& right_face: right_cell->face_iterators()) {
+                    double right_X {right_face->center()(0)};
+                    double right_Y {right_face->center()(1)};
+                    double right_Z {right_face->center()(2)};
+                    if (not(prms.beam_X - boundary.second <= right_X and
+                            right_X <= prms.beam_X - boundary.first and
+                            std::fabs(right_Y - prms.beam_Y) < 1e-12)) {
+                        continue;
+                    }
+                    if (std::fabs(right_X - left_X - material_offset) <
+                                1e-12 and
+                        std::fabs(right_Z - left_Z) < 1e-12) {
 
-    const size_t num_vector_dof_pairs {local_left_dofs.size()};
-    std::vector<double> offset(3);
-    for (size_t i {0}; i != num_vector_dof_pairs; i += 3) {
-        double left_X {present_solution(local_left_dofs[i])};
-        double right_X {present_solution(local_right_dofs[i])};
-        double X_offset {right_X - left_X};
-        offset[0] += X_offset;
-        double left_Y {present_solution(local_left_dofs[i + 1])};
-        double right_Y {present_solution(local_right_dofs[i + 1])};
-        double Y_offset {right_Y - left_Y};
-        offset[1] += Y_offset;
-        double left_Z {present_solution(local_left_dofs[i + 2])};
-        double right_Z {present_solution(local_right_dofs[i + 2])};
-        double Z_offset {right_Z - left_Z};
-        offset[2] += Z_offset;
-        // cout << left_X << " " << right_X << " " << left_Y << " " << right_Y
-        // << " " << " " << left_Z << " " << right_Z << " " << std::endl;
+                        set_overlap_constraints(left_face, right_face);
+                        make_periodicity_constraints(
+                                left_face,
+                                right_face,
+                                zero_constraints,
+                                dofs_to_supports,
+                                zero_function);
+                    }
+                }
+            }
+        }
     }
-    for (unsigned int i {0}; i != 3; i++) {
-        offset[i] /= (num_vector_dof_pairs / 3.0);
-    }
-    // cout << offset[0] << " " << offset[1] << " " << offset[2] << std::endl <<
-    // std::endl;
-
-    return offset;
 }
 
 template <int dim>
@@ -446,93 +455,6 @@ void SolveRing<dim>::set_overlap_constraints(
         nonzero_constraints.set_inhomogeneity(
                 right_dof, offset[component_index]);
     }
-}
-
-template <int dim>
-void SolveRing<dim>::setup_side_to_side_periodic_constraints() {
-    double material_offset = prms.beam_X - boundary.first - boundary.second;
-    std::set<VectorDoFPairs> dof_pairs {};
-    for (auto& left_cell: dof_handler.active_cell_iterators()) {
-        for (auto& left_face: left_cell->face_iterators()) {
-            double left_X {left_face->center()(0)};
-            double left_Y {left_face->center()(1)};
-            double left_Z {left_face->center()(2)};
-            if (not(boundary.first <= left_X and left_X <= boundary.second and
-                    left_Y < 1e-12)) {
-                continue;
-            }
-            for (auto& right_cell: dof_handler.active_cell_iterators()) {
-                for (auto& right_face: right_cell->face_iterators()) {
-                    double right_X {right_face->center()(0)};
-                    double right_Y {right_face->center()(1)};
-                    double right_Z {right_face->center()(2)};
-                    if (not(prms.beam_X - boundary.second <= right_X and
-                            right_X <= prms.beam_X - boundary.first and
-                            std::fabs(right_Y - prms.beam_Y) < 1e-12)) {
-                        continue;
-                    }
-                    if (std::fabs(right_X - left_X - material_offset) <
-                                1e-12 and
-                        std::fabs(right_Z - left_Z) < 1e-12) {
-
-                        set_overlap_constraints(left_face, right_face);
-                        make_periodicity_constraints(
-                                left_face,
-                                right_face,
-                                zero_constraints,
-                                dofs_to_supports,
-                                zero_function);
-                    }
-                }
-            }
-        }
-    }
-}
-
-template <int dim>
-void SolveRing<dim>::update_constraints() {
-    update_boundary_function_gamma();
-    nonzero_constraints.clear();
-    DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-    if (prms.boundary_type == "periodic_left_right") {
-        make_periodicity_constraints<dim, dim, double>(
-                face_pairs,
-                nonzero_constraints,
-                dofs_to_supports,
-                boundary_function[0]);
-    }
-    else if (prms.boundary_type == "periodic_bottom_left_top_right") {
-        setup_side_to_side_periodic_constraints();
-    }
-    else if (prms.boundary_type == "dirichlet_left_right") {
-        VectorTools::interpolate_boundary_values(
-                dof_handler, 1, boundary_function[0], nonzero_constraints);
-        VectorTools::interpolate_boundary_values(
-                dof_handler, 2, boundary_function[1], nonzero_constraints);
-    }
-    else if (prms.boundary_type == "dirichlet_left_periodic_top_right") {
-        VectorTools::interpolate_boundary_values(
-                dof_handler, 1, boundary_function[0], nonzero_constraints);
-        setup_side_to_side_periodic_constraints();
-    }
-    nonzero_constraints.close();
-}
-
-template <int dim>
-void SolveRing<dim>::update_boundary_function_gamma() {
-    for (auto& bf: boundary_function) {
-        bf.gamma = gamma;
-    }
-}
-
-template <int dim>
-void SolveRing<dim>::update_boundary_function_stage(unsigned int stage_i) {
-    for (unsigned int i {0}; i != prms.num_boundary_conditions; i++) {
-        boundary_function[i].f1 = prms.boundary_functions[stage_i - 1][i];
-        boundary_function[i].f2 = prms.boundary_functions[stage_i][i];
-    }
-    boundary.first = prms.left_boundaries[stage_i];
-    boundary.second = prms.right_boundaries[stage_i];
 }
 
 template <int dim>
@@ -666,18 +588,6 @@ void SolveRing<dim>::solve(const bool initial_step) {
 }
 
 template <int dim>
-double SolveRing<dim>::calc_residual_norm() {
-    Vector<double> residual(dof_handler.n_dofs());
-    for (unsigned int i = 0; i < dof_handler.n_dofs(); ++i) {
-        if (!nonzero_constraints.is_constrained(i)) {
-            residual(i) = system_rhs(i);
-        }
-    }
-
-    return residual.l2_norm();
-}
-
-template <int dim>
 void SolveRing<dim>::newton_iteration(
         bool first_step,
         const std::string checkpoint) {
@@ -746,6 +656,18 @@ void SolveRing<dim>::newton_iteration(
     }
     output_results(checkpoint);
     initial_stage_solution = present_solution;
+}
+
+template <int dim>
+double SolveRing<dim>::calc_residual_norm() {
+    Vector<double> residual(dof_handler.n_dofs());
+    for (unsigned int i = 0; i < dof_handler.n_dofs(); ++i) {
+        if (!nonzero_constraints.is_constrained(i)) {
+            residual(i) = system_rhs(i);
+        }
+    }
+
+    return residual.l2_norm();
 }
 
 template <int dim>

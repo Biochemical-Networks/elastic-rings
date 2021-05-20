@@ -16,11 +16,14 @@ template <int dim>
 struct Params {
     unsigned int global_refinements;
     unsigned int adaptive_refinements;
-    double length;
-    double width;
+    unsigned int starting_refinement;
+    double beam_X;
+    double beam_Y;
+    double beam_Z;
     unsigned int x_subdivisions;
     unsigned int y_subdivisions;
     unsigned int z_subdivisions;
+    std::string centering;
     unsigned int num_boundary_stages;
     unsigned int num_boundary_conditions;
     unsigned int starting_stage;
@@ -87,9 +90,16 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 Patterns::Integer(0),
                 "Number of final mesh refinements");
         prm.declare_entry(
-                "Beam length", "20", Patterns::Double(0), "Length of beam");
+                "Starting refinement level",
+                "0",
+                Patterns::Integer(0),
+                "Starting refinement level");
         prm.declare_entry(
-                "Beam width", "2", Patterns::Double(0), "Width of beam");
+                "Beam X", "100", Patterns::Double(0), "Length of beam");
+        prm.declare_entry(
+                "Beam Y", "1", Patterns::Double(0), "Height of beam");
+        prm.declare_entry(
+                "Beam Z", "1", Patterns::Double(0), "Width of beam");
         prm.declare_entry(
                 "x subdivisions",
                 "1",
@@ -105,6 +115,11 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "1",
                 Patterns::Integer(1),
                 "Number of subdivisions along z");
+        prm.declare_entry(
+                "Centering",
+                "",
+                Patterns::Anything(),
+                "Method to center the solution");
     }
     prm.leave_subsection();
 
@@ -129,7 +144,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Boundary type",
                 "periodic",
                 Patterns::Anything(),
-                "Tpype of boundary condition");
+                "Type of boundary condition");
     }
     prm.leave_subsection();
 
@@ -271,11 +286,15 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
     {
         global_refinements = prm.get_integer("Number of initial refinements");
         adaptive_refinements = prm.get_integer("Number of final refinements");
-        length = prm.get_double("Beam length");
-        width = prm.get_double("Beam width");
+        starting_refinement = prm.get_integer("Starting refinement level");
+        adaptive_refinements = prm.get_integer("Number of final refinements");
+        beam_X= prm.get_double("Beam X");
+        beam_Y = prm.get_double("Beam Y");
+        beam_Z = prm.get_double("Beam Z");
         x_subdivisions = prm.get_integer("x subdivisions");
         y_subdivisions = prm.get_integer("y subdivisions");
         z_subdivisions = prm.get_integer("z subdivisions");
+        centering = prm.get("Centering");
     }
     prm.leave_subsection();
 
@@ -296,7 +315,8 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
                     prm.get_integer("Number of boundary increments"));
             left_boundaries.push_back(prm.get_double("Left boundary"));
             right_boundaries.push_back(prm.get_double("Right boundary"));
-            use_current_config.push_back(prm.get_bool("Use current configuration"));
+            use_current_config.push_back(
+                    prm.get_bool("Use current configuration"));
             for (unsigned int j {0}; j != num_boundary_conditions; j++) {
                 prm.enter_subsection("Boundary condition " + std::to_string(j));
                 boundary_functions[i][j]->parse_parameters(prm);

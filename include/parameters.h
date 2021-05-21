@@ -1,6 +1,7 @@
 #ifndef parameters_h
 #define parameters_h
 
+#include <unordered_map>
 #include <vector>
 
 #include <deal.II/base/function.h>
@@ -14,8 +15,10 @@ using namespace dealii;
 
 template <int dim>
 struct Params {
-    unsigned int global_refinements;
-    unsigned int adaptive_refinements;
+
+    // Mesh and geometry
+    unsigned int initial_refinements;
+    unsigned int final_refinements;
     unsigned int starting_refinement;
     double beam_X;
     double beam_Y;
@@ -24,22 +27,39 @@ struct Params {
     unsigned int y_subdivisions;
     unsigned int z_subdivisions;
     std::string centering;
+
+    // Boundary conditions
     unsigned int num_boundary_stages;
     unsigned int num_boundary_conditions;
     unsigned int starting_stage;
-    std::string boundary_type;
-    std::vector<unsigned int> num_gamma_iters;
-
-    // There is probably a better way to do this
     static const unsigned int max_stages {5};
     static const unsigned int max_conditions {2};
+
+    // Bounday domain definition
+    std::vector<double> min_X {};
+    std::vector<double> max_X {};
+    std::vector<double> min_Y {};
+    std::vector<double> max_Y {};
+    std::vector<double> min_Z {};
+    std::vector<double> max_Z {};
+
+    // Bounday condition definitions
+    std::vector<std::string> boundary_type {};
+    std::unordered_map<unsigned int, unsigned int> associated_domain {};
+    std::unordered_map<unsigned int, unsigned int> constrained_domain {};
+    std::unordered_map<unsigned int, unsigned int> anchor_domain {};
+
+    // Bounday function definitions
+    std::vector<unsigned int> num_gamma_iters {};
+    std::vector<std::vector<bool>> use_current_config {};
     std::vector<std::vector<std::shared_ptr<Functions::ParsedFunction<dim>>>>
             boundary_functions;
-    std::vector<double> left_boundaries {};
-    std::vector<double> right_boundaries {};
-    std::vector<bool> use_current_config {};
+
+    // Physical constants
     double E;
     double nu;
+
+    // Solver
     unsigned int max_n_line_searches;
     double alpha_factor;
     double min_alpha;
@@ -49,6 +69,8 @@ struct Params {
     unsigned int max_linear_iters;
     double linear_tol;
     double precon_relaxation_param;
+
+    // Input and output
     bool load_from_checkpoint;
     std::string input_prefix;
     std::string input_checkpoint;
@@ -96,10 +118,8 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Starting refinement level");
         prm.declare_entry(
                 "Beam X", "100", Patterns::Double(0), "Length of beam");
-        prm.declare_entry(
-                "Beam Y", "1", Patterns::Double(0), "Height of beam");
-        prm.declare_entry(
-                "Beam Z", "1", Patterns::Double(0), "Width of beam");
+        prm.declare_entry("Beam Y", "1", Patterns::Double(0), "Height of beam");
+        prm.declare_entry("Beam Z", "1", Patterns::Double(0), "Width of beam");
         prm.declare_entry(
                 "x subdivisions",
                 "1",
@@ -117,7 +137,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Number of subdivisions along z");
         prm.declare_entry(
                 "Centering",
-                "",
+                "None",
                 Patterns::Anything(),
                 "Method to center the solution");
     }
@@ -126,27 +146,70 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Boundary conditions");
     {
         prm.declare_entry(
-                "Number of boundary stages",
+                "Number of boundary domains",
                 "1",
                 Patterns::Integer(1),
-                "Number of boundary stages");
+                "Number of boundary domains");
         prm.declare_entry(
                 "Number of boundary conditions",
                 "1",
                 Patterns::Integer(1),
                 "Number of boundary conditions");
         prm.declare_entry(
+                "Number of boundary stages",
+                "1",
+                Patterns::Integer(1),
+                "Number of boundary stages");
+        prm.declare_entry(
                 "Starting stage",
                 "1",
                 Patterns::Integer(0),
                 "Boundary stage to start calculations on");
-        prm.declare_entry(
-                "Boundary type",
-                "periodic",
-                Patterns::Anything(),
-                "Type of boundary condition");
     }
     prm.leave_subsection();
+
+    for (unsigned int i {0}; i != max_conditions + 1; i++) {
+        prm.enter_subsection("Boundary domain " + std::to_string(i));
+        {
+            prm.declare_entry(
+                    "X min", "0", Patterns::Double(), "Minimum X in domain");
+            prm.declare_entry(
+                    "X max", "0", Patterns::Double(), "Maximum X in domain");
+            prm.declare_entry(
+                    "Y min", "0", Patterns::Double(), "Minimum Y in domain");
+            prm.declare_entry(
+                    "Y max", "0", Patterns::Double(), "Maximum Y in domain");
+            prm.declare_entry(
+                    "Z min", "0", Patterns::Double(), "Minimum Z in domain");
+            prm.declare_entry(
+                    "Z max", "0", Patterns::Double(), "Maximum Z in domain");
+        }
+        prm.leave_subsection();
+    }
+
+    for (unsigned int i {0}; i != max_conditions + 1; i++) {
+        prm.enter_subsection("Boundary condition " + std::to_string(i));
+        {
+            prm.declare_entry(
+                    "Boundary type",
+                    "dirichlet",
+                    Patterns::Anything(),
+                    "Type of boundary condition");
+            prm.declare_entry(
+                    "Associated domain",
+                    "0",
+                    Patterns::Integer(0),
+                    "Associated domain");
+            prm.declare_entry(
+                    "Constrained domain",
+                    "0",
+                    Patterns::Integer(0),
+                    "Constrained domain");
+            prm.declare_entry(
+                    "Anchor domain", "0", Patterns::Integer(0), "Anchor domain");
+        }
+        prm.leave_subsection();
+    }
 
     for (unsigned int i {0}; i != max_stages + 1; i++) {
         prm.enter_subsection("Boundary function stage " + std::to_string(i));
@@ -156,24 +219,15 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                     "1",
                     Patterns::Integer(1),
                     "Number of boundary increments");
-            prm.declare_entry(
-                    "Left boundary",
-                    "0",
-                    Patterns::Double(),
-                    "Left edge of boundary");
-            prm.declare_entry(
-                    "Right boundary",
-                    "0",
-                    Patterns::Double(),
-                    "Right edge of boundary");
-            prm.declare_entry(
-                    "Use current configuration",
-                    "false",
-                    Patterns::Bool(),
-                    "Set the boundary condition to the current configuration");
             for (unsigned int j {0}; j != max_conditions + 1; j++) {
                 prm.enter_subsection("Boundary condition " + std::to_string(j));
                 {
+                    prm.declare_entry(
+                            "Use current configuration",
+                            "false",
+                            Patterns::Bool(),
+                            "Set the boundary condition to the current "
+                            "configuration");
                     Functions::ParsedFunction<dim>::declare_parameters(
                             prm, dim);
                 }
@@ -219,7 +273,8 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Alpha check factor",
                 "0.5",
                 Patterns::Double(0),
-                "Larger values require bigger residual decrease for acceptable "
+                "Larger values require bigger residual decrease for "
+                "acceptable "
                 "alpha");
         prm.declare_entry(
                 "Nonlinear tolerance",
@@ -284,11 +339,10 @@ template <int dim>
 void Params<dim>::parse_parameters(ParameterHandler& prm) {
     prm.enter_subsection("Mesh and geometry");
     {
-        global_refinements = prm.get_integer("Number of initial refinements");
-        adaptive_refinements = prm.get_integer("Number of final refinements");
+        initial_refinements = prm.get_integer("Number of initial refinements");
+        final_refinements = prm.get_integer("Number of final refinements");
         starting_refinement = prm.get_integer("Starting refinement level");
-        adaptive_refinements = prm.get_integer("Number of final refinements");
-        beam_X= prm.get_double("Beam X");
+        beam_X = prm.get_double("Beam X");
         beam_Y = prm.get_double("Beam Y");
         beam_Z = prm.get_double("Beam Z");
         x_subdivisions = prm.get_integer("x subdivisions");
@@ -304,22 +358,46 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         num_boundary_conditions =
                 prm.get_integer("Number of boundary conditions");
         starting_stage = prm.get_integer("Starting stage");
-        boundary_type = prm.get("Boundary type");
     }
     prm.leave_subsection();
+
+    for (unsigned int i {0}; i != num_boundary_conditions + 1; i++) {
+        prm.enter_subsection("Boundary domain " + std::to_string(i));
+        {
+            min_X.push_back(prm.get_double("X min"));
+            max_X.push_back(prm.get_double("X max"));
+            min_Y.push_back(prm.get_double("Y min"));
+            max_Y.push_back(prm.get_double("Y max"));
+            min_Z.push_back(prm.get_double("Z min"));
+            max_Z.push_back(prm.get_double("Z max"));
+        }
+        prm.leave_subsection();
+    }
+
+    for (unsigned int i {0}; i != num_boundary_conditions + 1; i++) {
+        prm.enter_subsection("Boundary condition " + std::to_string(i));
+        {
+            boundary_type.push_back(prm.get("Boundary type"));
+            associated_domain[i] = prm.get_integer("Associated domain");
+            constrained_domain[i] = prm.get_integer("Constrained domain");
+            anchor_domain[i] = prm.get_integer("Anchor domain");
+        }
+        prm.leave_subsection();
+    }
 
     for (unsigned int i {0}; i != num_boundary_stages + 1; i++) {
         prm.enter_subsection("Boundary function stage " + std::to_string(i));
         {
             num_gamma_iters.push_back(
                     prm.get_integer("Number of boundary increments"));
-            left_boundaries.push_back(prm.get_double("Left boundary"));
-            right_boundaries.push_back(prm.get_double("Right boundary"));
-            use_current_config.push_back(
-                    prm.get_bool("Use current configuration"));
+            use_current_config.push_back({});
             for (unsigned int j {0}; j != num_boundary_conditions; j++) {
                 prm.enter_subsection("Boundary condition " + std::to_string(j));
-                boundary_functions[i][j]->parse_parameters(prm);
+                {
+                    use_current_config[i].push_back(
+                            prm.get_bool("Use current configuration"));
+                    boundary_functions[i][j]->parse_parameters(prm);
+                }
                 prm.leave_subsection();
             }
             prm.leave_subsection();

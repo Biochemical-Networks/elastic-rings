@@ -204,8 +204,8 @@ void SolveRing<dim>::run() {
             checkpoint = std::to_string(stage_i) + "-" +
                          std::to_string(prms.starting_refinement) + "-" +
                          gamma_formatted;
-            cout << "Stage " << std::to_string(stage_i) << ", gamma "
-                 << gamma_formatted << std::endl;
+            std::cout << "Stage " << std::to_string(stage_i) << ", gamma "
+                      << gamma_formatted << std::endl;
             update_constraints();
             newton_iteration(first_step, checkpoint);
             output_checkpoint(checkpoint);
@@ -217,7 +217,7 @@ void SolveRing<dim>::run() {
     for (unsigned int i {prms.starting_refinement + 1};
          i != prms.starting_refinement + prms.final_refinements + 1;
          i++) {
-        cout << "Grid refinement " << std::to_string(i) << std::endl;
+        std::cout << "Grid refinement " << std::to_string(i) << std::endl;
         checkpoint = std::to_string(stage_i) + "-" + std::to_string(i);
         refine_mesh();
         newton_iteration(first_step, checkpoint);
@@ -311,8 +311,8 @@ void SolveRing<dim>::setup_constraints() {
     nonzero_constraints.close();
     zero_constraints.close();
 
-    cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
-         << std::endl;
+    std::cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+              << std::endl;
 }
 
 template <int dim>
@@ -443,7 +443,7 @@ void SolveRing<dim>::set_inhomogeneous_overlap_constraints(
     for (unsigned int i {0}; i != dofs_per_face; ++i) {
         auto anchor_dof = anchor_dofs[i];
         auto constrained_dof = constrained_dofs[i];
-        cout << anchor_dof << " " << constrained_dof << std::endl;
+        std::cout << anchor_dof << " " << constrained_dof << std::endl;
         if (nonzero_constraints.is_constrained(constrained_dof)) {
             continue;
         }
@@ -467,17 +467,18 @@ void SolveRing<dim>::set_inhomogeneous_overlap_constraints(
 
         Point<dim> anchor_dof_support {dofs_to_supports[anchor_dof]};
         Point<dim> constrained_dof_support {dofs_to_supports[constrained_dof]};
-        cout << anchor_dof_support[0] << " " << anchor_dof_support[1] << " "
-             << anchor_dof_support[2] << std::endl;
-        cout << constrained_dof_support[0] << " " << constrained_dof_support[1]
-             << " " << constrained_dof_support[2] << std::endl;
+        std::cout << anchor_dof_support[0] << " " << anchor_dof_support[1]
+                  << " " << anchor_dof_support[2] << std::endl;
+        std::cout << constrained_dof_support[0] << " "
+                  << constrained_dof_support[1] << " "
+                  << constrained_dof_support[2] << std::endl;
         Point<dim> diff {constrained_dof_support - anchor_dof_support};
         Point<dim> ref {
                 abs(diff[0]), anchor_dof_support[1], anchor_dof_support[2]};
 
         Vector<double> offset(3);
         boundary_function[0].vector_value(ref, offset);
-        cout << offset[component_index] << std::endl << std::endl;
+        std::cout << offset[component_index] << std::endl << std::endl;
         nonzero_constraints.set_inhomogeneity(
                 constrained_dof, offset[component_index]);
     }
@@ -887,47 +888,47 @@ void SolveRing<dim>::integrate_over_boundaries() {
     const Tensor<1, dim, double> right_spatial_shear_force = {
             spatial_force[1] - right_spatial_normal_force};
 
-    cout << "Left boundary second pseudo material force: "
-         << second_pseudo_material_force[0].norm() << std::endl;
-    cout << "Right boundary second pseudo material force: "
-         << second_pseudo_material_force[1].norm() << std::endl;
-    cout << "Left boundary second pseudo material normal force: "
-         << left_second_pseudo_material_normal_force.norm() << std::endl;
-    cout << "Right boundary second pseudo material normal force: "
-         << right_second_pseudo_material_normal_force.norm() << std::endl;
-    cout << "Left boundary second pseudo material shear force: "
-         << left_second_pseudo_material_shear_force.norm() << std::endl;
-    cout << "Right boundary second pseudo material shear force: "
-         << right_second_pseudo_material_shear_force.norm() << std::endl;
-    cout << std::endl;
+    std::cout << "Left boundary second pseudo material force: "
+              << second_pseudo_material_force[0].norm() << std::endl;
+    std::cout << "Right boundary second pseudo material force: "
+              << second_pseudo_material_force[1].norm() << std::endl;
+    std::cout << "Left boundary second pseudo material normal force: "
+              << left_second_pseudo_material_normal_force.norm() << std::endl;
+    std::cout << "Right boundary second pseudo material normal force: "
+              << right_second_pseudo_material_normal_force.norm() << std::endl;
+    std::cout << "Left boundary second pseudo material shear force: "
+              << left_second_pseudo_material_shear_force.norm() << std::endl;
+    std::cout << "Right boundary second pseudo material shear force: "
+              << right_second_pseudo_material_shear_force.norm() << std::endl;
+    std::cout << std::endl;
 
-    cout << "Left boundary first pseudo material force: "
-         << first_pseudo_material_force[0].norm() << std::endl;
-    cout << "Right boundary first pseudo material force: "
-         << first_pseudo_material_force[1].norm() << std::endl;
-    cout << "Left boundary first pseudo material normal force: "
-         << left_first_pseudo_material_normal_force.norm() << std::endl;
-    cout << "Right boundary first pseudo material normal force: "
-         << right_first_pseudo_material_normal_force.norm() << std::endl;
-    cout << "Left boundary first pseudo material shear force: "
-         << left_first_pseudo_material_shear_force.norm() << std::endl;
-    cout << "Right boundary first pseudo material shear force: "
-         << right_first_pseudo_material_shear_force.norm() << std::endl;
-    cout << std::endl;
+    std::cout << "Left boundary first pseudo material force: "
+              << first_pseudo_material_force[0].norm() << std::endl;
+    std::cout << "Right boundary first pseudo material force: "
+              << first_pseudo_material_force[1].norm() << std::endl;
+    std::cout << "Left boundary first pseudo material normal force: "
+              << left_first_pseudo_material_normal_force.norm() << std::endl;
+    std::cout << "Right boundary first pseudo material normal force: "
+              << right_first_pseudo_material_normal_force.norm() << std::endl;
+    std::cout << "Left boundary first pseudo material shear force: "
+              << left_first_pseudo_material_shear_force.norm() << std::endl;
+    std::cout << "Right boundary first pseudo material shear force: "
+              << right_first_pseudo_material_shear_force.norm() << std::endl;
+    std::cout << std::endl;
 
-    cout << "Left boundary spatial force: " << spatial_force[0].norm()
-         << std::endl;
-    cout << "Right boundary spatial force: " << spatial_force[1].norm()
-         << std::endl;
-    cout << "Left boundary spatial normal force: "
-         << left_spatial_normal_force.norm() << std::endl;
-    cout << "Right boundary spatial normal force: "
-         << right_spatial_normal_force.norm() << std::endl;
-    cout << "Left boundary spatial shear force: "
-         << left_spatial_shear_force.norm() << std::endl;
-    cout << "Right boundary spatial shear force: "
-         << right_spatial_shear_force.norm() << std::endl;
-    cout << std::endl;
+    std::cout << "Left boundary spatial force: " << spatial_force[0].norm()
+              << std::endl;
+    std::cout << "Right boundary spatial force: " << spatial_force[1].norm()
+              << std::endl;
+    std::cout << "Left boundary spatial normal force: "
+              << left_spatial_normal_force.norm() << std::endl;
+    std::cout << "Right boundary spatial normal force: "
+              << right_spatial_normal_force.norm() << std::endl;
+    std::cout << "Left boundary spatial shear force: "
+              << left_spatial_shear_force.norm() << std::endl;
+    std::cout << "Right boundary spatial shear force: "
+              << right_spatial_shear_force.norm() << std::endl;
+    std::cout << std::endl;
 }
 
 template <int dim>

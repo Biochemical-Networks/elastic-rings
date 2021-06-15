@@ -20,13 +20,16 @@ struct Params {
     unsigned int initial_refinements;
     unsigned int final_refinements;
     unsigned int starting_refinement;
+    std::string refine_direction;
     double beam_X;
     double beam_Y;
     double beam_Z;
     unsigned int x_subdivisions;
     unsigned int y_subdivisions;
     unsigned int z_subdivisions;
+    unsigned int fe_degree;
     std::string centering;
+    bool set_ring_config;
 
     // Boundary conditions
     unsigned int num_boundary_stages;
@@ -117,6 +120,11 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 Patterns::Integer(0),
                 "Starting refinement level");
         prm.declare_entry(
+                "Refinement direction",
+                "",
+                Patterns::Anything(),
+                "Refinement direction (x, yz, or nothing for isotropic)");
+        prm.declare_entry(
                 "Beam X", "100", Patterns::Double(0), "Length of beam");
         prm.declare_entry("Beam Y", "1", Patterns::Double(0), "Height of beam");
         prm.declare_entry("Beam Z", "1", Patterns::Double(0), "Width of beam");
@@ -136,10 +144,20 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 Patterns::Integer(1),
                 "Number of subdivisions along z");
         prm.declare_entry(
+                "FE degree",
+                "1",
+                Patterns::Integer(1),
+                "FE degree (1 or 2)");
+        prm.declare_entry(
                 "Centering",
                 "None",
                 Patterns::Anything(),
                 "Method to center the solution");
+        prm.declare_entry(
+                "Set ring configuration",
+                "false",
+                Patterns::Bool(),
+                "Set initial configuration to be a ring");
     }
     prm.leave_subsection();
 
@@ -342,13 +360,16 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         initial_refinements = prm.get_integer("Number of initial refinements");
         final_refinements = prm.get_integer("Number of final refinements");
         starting_refinement = prm.get_integer("Starting refinement level");
+        refine_direction = prm.get("Refinement direction");
         beam_X = prm.get_double("Beam X");
         beam_Y = prm.get_double("Beam Y");
         beam_Z = prm.get_double("Beam Z");
         x_subdivisions = prm.get_integer("x subdivisions");
         y_subdivisions = prm.get_integer("y subdivisions");
         z_subdivisions = prm.get_integer("z subdivisions");
+        fe_degree = prm.get_integer("FE degree");
         centering = prm.get("Centering");
+        set_ring_config = prm.get_bool("Set ring configuration");
     }
     prm.leave_subsection();
 

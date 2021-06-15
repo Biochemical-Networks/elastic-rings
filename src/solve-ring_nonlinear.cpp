@@ -23,7 +23,7 @@
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/fe_values_extractors.h>
-#include <deal.II/fe/mapping_q1.h>
+#include <deal.II/fe/mapping_q_generic.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_out.h>
@@ -139,6 +139,7 @@ class SolveRing {
     void output_results(const std::string checkpoint) const;
     void output_moved_mesh_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
+    void set_ring_configuration();
     std::string format_gamma();
 
     Params<dim>& prms;
@@ -171,11 +172,12 @@ class SolveRing {
 template <int dim>
 SolveRing<dim>::SolveRing(Params<dim>& prms):
         prms {prms},
-        fe(FE_Q<dim>(1), dim),
+        fe(FE_Q<dim>(prms.fe_degree), dim),
         dof_handler(triangulation),
         zero_function {3},
         boundary_function(prms.num_boundary_conditions),
         stage_i {prms.starting_stage} {
+
     mu = prms.E / (2 * (1 + prms.nu));
     lambda = prms.E * prms.nu / ((1 + prms.nu) * (1 - 2 * prms.nu));
 }
@@ -192,6 +194,10 @@ void SolveRing<dim>::run() {
     }
     else {
         initiate_system();
+    }
+    if (prms.set_ring_config) {
+        first_step = false;
+        set_ring_configuration();
     }
     setup_constraints();
     setup_sparsity_pattern();
@@ -210,13 +216,15 @@ void SolveRing<dim>::run() {
             newton_iteration(first_step, checkpoint);
             output_checkpoint(checkpoint);
             first_step = false;
-            stage_i++;
         }
+        stage_i++;
     }
+    stage_i--;
     integrate_over_boundaries();
     for (unsigned int i {prms.starting_refinement + 1};
          i != prms.starting_refinement + prms.final_refinements + 1;
          i++) {
+
         std::cout << "Grid refinement " << std::to_string(i) << std::endl;
         checkpoint = std::to_string(stage_i) + "-" + std::to_string(i);
         refine_mesh();
@@ -280,10 +288,11 @@ void SolveRing<dim>::initiate_system() {
     system_rhs.reinit(dof_handler.n_dofs());
 
     // Get material coordinates for easy access
-    const MappingQ1<dim> mapping;
     dofs_to_supports.resize(dof_handler.n_dofs());
     DoFTools::map_dofs_to_support_points<dim, dim>(
-            mapping, dof_handler, dofs_to_supports);
+            MappingQGeneric<dim>(prms.fe_degree),
+            dof_handler,
+            dofs_to_supports);
 }
 
 template <int dim>
@@ -739,6 +748,17 @@ void SolveRing<dim>::refine_mesh() {
     triangulation.prepare_coarsening_and_refinement();
     SolutionTransfer<dim, Vector<double>> soltrans(dof_handler);
     soltrans.prepare_for_pure_refinement();
+
+    if (prms.refine_direction == "x") {
+        for (auto& cell: dof_handler.active_cell_iterators()) {
+            cell->set_refine_flag(RefinementCase<3>::cut_x);
+        }
+    }
+    else if (prms.refine_direction == "yz") {
+        for (auto& cell: dof_handler.active_cell_iterators()) {
+            cell->set_refine_flag(RefinementCase<3>::cut_yz);
+        }
+    }
     triangulation.execute_coarsening_and_refinement();
 
     dof_handler.distribute_dofs(fe);
@@ -1012,6 +1032,37 @@ void SolveRing<dim>::load_checkpoint(const std::string checkpoint) {
     dofs_to_supports.resize(dof_handler.n_dofs());
     DoFTools::map_dofs_to_support_points<dim, dim>(
             mapping, dof_handler, dofs_to_supports);
+}
+
+template <int dim>
+void SolveRing<dim>::set_ring_configuration() {
+    present_solution.reinit(dof_handler.n_dofs());
+    const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
+    std::vector<types::global_dof_index> cell_dofs(dofs_per_cell);
+    double radius {prms.beam_X / (2 * numbers::PI)};
+    for (auto& cell: dof_handler.active_cell_iterators()) {
+        cell->get_dof_indices(cell_dofs);
+        for (unsigned int i {0}; i != dofs_per_cell; ++i) {
+            auto cell_dof = cell_dofs[i];
+            auto component_index = fe.system_to_component_index(i).first;
+            Point<dim> dof_support {dofs_to_supports[cell_dof]};
+            double X {dof_support[0]};
+            double Y {dof_support[1]};
+            if (component_index == 0) {
+                double x_neutral {radius * sin(X / radius)};
+                double x_beam {(Y - prms.beam_Y / 2) * sin(X / radius)};
+                double x {x_neutral + x_beam};
+                present_solution[cell_dof] = x - X;
+            }
+            else if (component_index == 1) {
+                double y_neutral {radius * cos(X / radius)};
+                double y_beam {(Y - prms.beam_Y / 2) * cos(X / radius)};
+                double y {y_neutral + y_beam - radius + prms.beam_Y / 2};
+                present_solution[cell_dof] = y - Y;
+            }
+        }
+    }
+    initial_stage_solution = present_solution;
 }
 
 template <int dim>

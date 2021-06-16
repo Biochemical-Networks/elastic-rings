@@ -452,7 +452,6 @@ void SolveRing<dim>::set_inhomogeneous_overlap_constraints(
     for (unsigned int i {0}; i != dofs_per_face; ++i) {
         auto anchor_dof = anchor_dofs[i];
         auto constrained_dof = constrained_dofs[i];
-        std::cout << anchor_dof << " " << constrained_dof << std::endl;
         if (nonzero_constraints.is_constrained(constrained_dof)) {
             continue;
         }
@@ -476,18 +475,12 @@ void SolveRing<dim>::set_inhomogeneous_overlap_constraints(
 
         Point<dim> anchor_dof_support {dofs_to_supports[anchor_dof]};
         Point<dim> constrained_dof_support {dofs_to_supports[constrained_dof]};
-        std::cout << anchor_dof_support[0] << " " << anchor_dof_support[1]
-                  << " " << anchor_dof_support[2] << std::endl;
-        std::cout << constrained_dof_support[0] << " "
-                  << constrained_dof_support[1] << " "
-                  << constrained_dof_support[2] << std::endl;
         Point<dim> diff {constrained_dof_support - anchor_dof_support};
         Point<dim> ref {
                 abs(diff[0]), anchor_dof_support[1], anchor_dof_support[2]};
 
         Vector<double> offset(3);
         boundary_function[0].vector_value(ref, offset);
-        std::cout << offset[component_index] << std::endl << std::endl;
         nonzero_constraints.set_inhomogeneity(
                 constrained_dof, offset[component_index]);
     }

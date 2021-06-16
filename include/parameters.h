@@ -32,6 +32,7 @@ struct Params {
     bool set_ring_config;
 
     // Boundary conditions
+    unsigned int num_boundary_domains;
     unsigned int num_boundary_stages;
     unsigned int num_boundary_conditions;
     unsigned int starting_stage;
@@ -375,6 +376,7 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
 
     prm.enter_subsection("Boundary conditions");
     {
+        num_boundary_domains = prm.get_integer("Number of boundary domains");
         num_boundary_stages = prm.get_integer("Number of boundary stages");
         num_boundary_conditions =
                 prm.get_integer("Number of boundary conditions");

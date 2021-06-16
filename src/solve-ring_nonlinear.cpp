@@ -248,7 +248,7 @@ void SolveRing<dim>::make_mesh() {
             triangulation, subdivisions, origin, size);
 
     for (auto& face: triangulation.active_face_iterators()) {
-        for (unsigned int i {0}; i != prms.num_boundary_conditions; i++) {
+        for (unsigned int i {0}; i != prms.num_boundary_domains; i++) {
             if (face_in_domain(face->center(), i)) {
                 face->set_boundary_id(i + 1);
             }

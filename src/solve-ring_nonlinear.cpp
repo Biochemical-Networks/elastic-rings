@@ -623,8 +623,8 @@ void SolveRing<dim>::newton_iteration(
 
     bool boundary_updated {!first_step};
     unsigned int line_search_n = 0;
-    double last_res = 1.0;
-    double current_res = 1.0;
+    double last_res = 1e10;
+    double current_res = 1e10;
 
     while ((first_step or (current_res > prms.nonlinear_tol)) and
            line_search_n < prms.max_n_line_searches) {

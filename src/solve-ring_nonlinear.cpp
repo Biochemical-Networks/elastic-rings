@@ -134,9 +134,12 @@ class SolveRing {
     void refine_mesh();
     void move_mesh();
     void integrate_over_boundaries();
+    void calc_shear_and_normal_forces();
+    void print_forces();
     void output_grid() const;
     void output_checkpoint(const std::string checkpoint) const;
-    void output_results(const std::string checkpoint) const;
+    void output_dof_results(const std::string checkpoint) const;
+    void output_integrated_results(const std::string checkpoint) const;
     void output_moved_mesh_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
     void set_ring_configuration();
@@ -167,6 +170,29 @@ class SolveRing {
     std::vector<Point<dim>> dofs_to_supports;
     unsigned int stage_i;
     double gamma;
+
+    std::vector<Tensor<1, dim, double>> first_pseudo_material_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> first_pseudo_material_normal_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> first_pseudo_material_shear_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> second_pseudo_material_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> second_pseudo_material_normal_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> second_pseudo_material_shear_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> spatial_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> spatial_normal_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> spatial_shear_force =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> ave_material_normal =
+            std::vector<Tensor<1, dim, double>>(2);
+    std::vector<Tensor<1, dim, double>> ave_spatial_normal =
+            std::vector<Tensor<1, dim, double>>(2);
 };
 
 template <int dim>
@@ -221,6 +247,8 @@ void SolveRing<dim>::run() {
     }
     stage_i--;
     integrate_over_boundaries();
+    output_integrated_results(checkpoint);
+    print_forces();
     for (unsigned int i {prms.starting_refinement + 1};
          i != prms.starting_refinement + prms.final_refinements + 1;
          i++) {
@@ -320,7 +348,7 @@ void SolveRing<dim>::setup_constraints() {
     nonzero_constraints.close();
     zero_constraints.close();
 
-    std::cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+    std::cout << "Number of degrees of freedom: " << dof_handler.n_dofs()
               << std::endl;
 }
 
@@ -646,7 +674,7 @@ void SolveRing<dim>::newton_iteration(
         else {
             nonzero_constraints.distribute(present_solution);
             if (line_search_n == 0) {
-                output_results(checkpoint + "-initial");
+                output_dof_results(checkpoint + "-initial");
             }
             evaluation_point = present_solution;
             assemble_system(first_step);
@@ -658,7 +686,7 @@ void SolveRing<dim>::newton_iteration(
                 evaluation_point.add(alpha, newton_update);
                 assemble_rhs(first_step);
                 current_res = calc_residual_norm();
-                std::cout << "  alpha: " << std::setw(10) << alpha
+                std::cout << "    alpha: " << std::setw(10) << alpha
                           << std::setw(0) << "  residual: " << current_res
                           << std::endl;
                 if (boundary_updated or
@@ -669,9 +697,9 @@ void SolveRing<dim>::newton_iteration(
                 }
             }
             present_solution = evaluation_point;
-            std::cout << "  number of line searches: " << line_search_n
-                      << "  residual: " << current_res
-                      << "  energy: " << present_energy << std::endl;
+            std::cout << "    number of line searches: " << line_search_n
+                      << "    residual: " << current_res
+                      << "    energy: " << present_energy << std::endl;
             last_res = current_res;
             ++line_search_n;
 
@@ -683,7 +711,7 @@ void SolveRing<dim>::newton_iteration(
             }
         }
     }
-    output_results(checkpoint);
+    output_dof_results(checkpoint);
     initial_stage_solution = present_solution;
 }
 
@@ -793,11 +821,11 @@ void SolveRing<dim>::integrate_over_boundaries() {
             update_values | update_gradients | update_quadrature_points |
                     update_JxW_values | update_normal_vectors);
 
-    std::vector<Tensor<1, dim, double>> first_pseudo_material_force(2);
-    std::vector<Tensor<1, dim, double>> second_pseudo_material_force(2);
-    std::vector<Tensor<1, dim, double>> spatial_force(2);
-    std::vector<Tensor<1, dim, double>> ave_material_normal(2);
-    std::vector<Tensor<1, dim, double>> ave_spatial_normal(2);
+    first_pseudo_material_force.clear();
+    second_pseudo_material_force.clear();
+    spatial_force.clear();
+    ave_material_normal.clear();
+    ave_spatial_normal.clear();
     const FEValuesExtractors::Vector displacements(0);
     for (const auto& cell: dof_handler.active_cell_iterators()) {
         for (const auto face_i: GeometryInfo<dim>::face_indices()) {
@@ -858,61 +886,68 @@ void SolveRing<dim>::integrate_over_boundaries() {
             }
         }
     }
+    calc_shear_and_normal_forces();
+}
+
+template <int dim>
+void SolveRing<dim>::calc_shear_and_normal_forces() {
     ave_material_normal[0] /= ave_material_normal[0].norm();
     ave_spatial_normal[0] /= ave_spatial_normal[0].norm();
     ave_material_normal[1] /= ave_material_normal[1].norm();
     ave_spatial_normal[1] /= ave_spatial_normal[1].norm();
 
-    const Tensor<1, dim, double> left_second_pseudo_material_normal_force = {
+    second_pseudo_material_normal_force[0] =
             (second_pseudo_material_force[0] * ave_material_normal[0]) *
-            ave_material_normal[0]};
-    const Tensor<1, dim, double> left_second_pseudo_material_shear_force = {
+            ave_material_normal[0];
+    second_pseudo_material_shear_force[0] =
             second_pseudo_material_force[0] -
-            left_second_pseudo_material_normal_force};
+            second_pseudo_material_normal_force[0];
 
-    const Tensor<1, dim, double> left_first_pseudo_material_normal_force = {
+    first_pseudo_material_normal_force[0] =
             (first_pseudo_material_force[0] * ave_material_normal[0]) *
-            ave_material_normal[0]};
-    const Tensor<1, dim, double> left_first_pseudo_material_shear_force = {
+            ave_material_normal[0];
+    first_pseudo_material_shear_force[0] =
             first_pseudo_material_force[0] -
-            left_first_pseudo_material_normal_force};
+            first_pseudo_material_normal_force[0];
 
-    const Tensor<1, dim, double> left_spatial_normal_force = {
-            (spatial_force[0] * ave_spatial_normal[0]) * ave_spatial_normal[0]};
-    const Tensor<1, dim, double> left_spatial_shear_force = {
-            spatial_force[0] - left_spatial_normal_force};
+    spatial_normal_force[0] =
+            (spatial_force[0] * ave_spatial_normal[0]) * ave_spatial_normal[0];
+    spatial_shear_force = {spatial_force[0] - spatial_normal_force[0]};
 
-    const Tensor<1, dim, double> right_second_pseudo_material_normal_force = {
+    second_pseudo_material_normal_force[1] =
             (second_pseudo_material_force[1] * ave_material_normal[1]) *
-            ave_material_normal[1]};
-    const Tensor<1, dim, double> right_second_pseudo_material_shear_force = {
+            ave_material_normal[1];
+    second_pseudo_material_shear_force[1] =
             second_pseudo_material_force[1] -
-            right_second_pseudo_material_normal_force};
+            second_pseudo_material_normal_force[1];
 
-    const Tensor<1, dim, double> right_first_pseudo_material_normal_force = {
+    first_pseudo_material_normal_force[1] =
             (first_pseudo_material_force[1] * ave_material_normal[1]) *
-            ave_material_normal[1]};
-    const Tensor<1, dim, double> right_first_pseudo_material_shear_force = {
+            ave_material_normal[1];
+    first_pseudo_material_shear_force[1] =
             first_pseudo_material_force[1] -
-            right_first_pseudo_material_normal_force};
+            first_pseudo_material_normal_force[1];
 
-    const Tensor<1, dim, double> right_spatial_normal_force = {
-            (spatial_force[1] * ave_spatial_normal[1]) * ave_spatial_normal[1]};
-    const Tensor<1, dim, double> right_spatial_shear_force = {
-            spatial_force[1] - right_spatial_normal_force};
+    spatial_normal_force[1] =
+            (spatial_force[1] * ave_spatial_normal[1]) * ave_spatial_normal[1];
+    spatial_shear_force[1] = spatial_force[1] - spatial_normal_force[1];
+}
 
+template <int dim>
+void SolveRing<dim>::print_forces() {
+    std::cout << std::endl;
     std::cout << "Left boundary second pseudo material force: "
               << second_pseudo_material_force[0].norm() << std::endl;
     std::cout << "Right boundary second pseudo material force: "
               << second_pseudo_material_force[1].norm() << std::endl;
     std::cout << "Left boundary second pseudo material normal force: "
-              << left_second_pseudo_material_normal_force.norm() << std::endl;
+              << second_pseudo_material_normal_force[0].norm() << std::endl;
     std::cout << "Right boundary second pseudo material normal force: "
-              << right_second_pseudo_material_normal_force.norm() << std::endl;
+              << second_pseudo_material_normal_force[1].norm() << std::endl;
     std::cout << "Left boundary second pseudo material shear force: "
-              << left_second_pseudo_material_shear_force.norm() << std::endl;
+              << second_pseudo_material_shear_force[0].norm() << std::endl;
     std::cout << "Right boundary second pseudo material shear force: "
-              << right_second_pseudo_material_shear_force.norm() << std::endl;
+              << second_pseudo_material_shear_force[1].norm() << std::endl;
     std::cout << std::endl;
 
     std::cout << "Left boundary first pseudo material force: "
@@ -920,13 +955,13 @@ void SolveRing<dim>::integrate_over_boundaries() {
     std::cout << "Right boundary first pseudo material force: "
               << first_pseudo_material_force[1].norm() << std::endl;
     std::cout << "Left boundary first pseudo material normal force: "
-              << left_first_pseudo_material_normal_force.norm() << std::endl;
+              << first_pseudo_material_normal_force[0].norm() << std::endl;
     std::cout << "Right boundary first pseudo material normal force: "
-              << right_first_pseudo_material_normal_force.norm() << std::endl;
+              << first_pseudo_material_normal_force[1].norm() << std::endl;
     std::cout << "Left boundary first pseudo material shear force: "
-              << left_first_pseudo_material_shear_force.norm() << std::endl;
+              << first_pseudo_material_shear_force[0].norm() << std::endl;
     std::cout << "Right boundary first pseudo material shear force: "
-              << right_first_pseudo_material_shear_force.norm() << std::endl;
+              << first_pseudo_material_shear_force[1].norm() << std::endl;
     std::cout << std::endl;
 
     std::cout << "Left boundary spatial force: " << spatial_force[0].norm()
@@ -934,13 +969,13 @@ void SolveRing<dim>::integrate_over_boundaries() {
     std::cout << "Right boundary spatial force: " << spatial_force[1].norm()
               << std::endl;
     std::cout << "Left boundary spatial normal force: "
-              << left_spatial_normal_force.norm() << std::endl;
+              << spatial_normal_force[0].norm() << std::endl;
     std::cout << "Right boundary spatial normal force: "
-              << right_spatial_normal_force.norm() << std::endl;
+              << spatial_normal_force[1].norm() << std::endl;
     std::cout << "Left boundary spatial shear force: "
-              << left_spatial_shear_force.norm() << std::endl;
+              << spatial_shear_force[0].norm() << std::endl;
     std::cout << "Right boundary spatial shear force: "
-              << right_spatial_shear_force.norm() << std::endl;
+              << spatial_shear_force[1].norm() << std::endl;
     std::cout << std::endl;
 }
 
@@ -970,7 +1005,7 @@ void SolveRing<dim>::output_checkpoint(const std::string checkpoint) const {
 }
 
 template <int dim>
-void SolveRing<dim>::output_results(const std::string checkpoint) const {
+void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     DataOutFaces<dim> data_out_faces;
     data_out_faces.attach_dof_handler(dof_handler);
     FacesPostprocessor<dim> faces_postprocessor {lambda, mu};
@@ -980,6 +1015,35 @@ void SolveRing<dim>::output_results(const std::string checkpoint) const {
     std::ofstream data_output_faces(
             prms.output_prefix + "_faces_" + checkpoint + ".vtk");
     data_out_faces.write_vtk(data_output_faces);
+}
+
+template <int dim>
+void SolveRing<dim>::output_integrated_results(
+        const std::string checkpoint) const {
+    std::ofstream outfile;
+    outfile.open(prms.output_prefix + "_integrated_" + checkpoint + ".dat");
+    outfile << "degree "
+            << "xdivs "
+            << "ydivs "
+            << "zdivs "
+            << "youngs "
+            << "poisson "
+            << "energy "
+            << "left_spatial_force "
+            << "right_spatial_force "
+            << "left_spatial_normal_force "
+            << "right_spatial_normal_force "
+            << "left_spatial_shear_force "
+            << "right_spatial_shear_force" << std::endl;
+    outfile << prms.fe_degree << " " << prms.x_subdivisions << " "
+            << prms.y_subdivisions << " " << prms.z_subdivisions << " "
+            << prms.E << " " << prms.nu << " " << present_energy << " "
+            << spatial_force[0].norm() << " " << spatial_force[1].norm() << " "
+            << spatial_normal_force[0].norm() << " "
+            << spatial_normal_force[1].norm() << " "
+            << spatial_shear_force[0].norm() << " "
+            << spatial_shear_force[1].norm() << std::endl;
+    outfile.close();
 }
 
 template <int dim>

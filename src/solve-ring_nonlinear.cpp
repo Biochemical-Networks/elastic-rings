@@ -1022,10 +1022,13 @@ void SolveRing<dim>::output_integrated_results(
         const std::string checkpoint) const {
     std::ofstream outfile;
     outfile.open(prms.output_prefix + "_integrated_" + checkpoint + ".dat");
-    outfile << "degree "
+    outfile << "beam_X "
+            << "beam_Y "
+            << "beam_Z "
             << "xdivs "
             << "ydivs "
             << "zdivs "
+            << "degree "
             << "youngs "
             << "poisson "
             << "energy "
@@ -1035,9 +1038,10 @@ void SolveRing<dim>::output_integrated_results(
             << "right_spatial_normal_force "
             << "left_spatial_shear_force "
             << "right_spatial_shear_force" << std::endl;
-    outfile << prms.fe_degree << " " << prms.x_subdivisions << " "
-            << prms.y_subdivisions << " " << prms.z_subdivisions << " "
-            << prms.E << " " << prms.nu << " " << present_energy << " "
+    outfile << prms.beam_X << " " << prms.beam_Y << " " << prms.beam_Z << " "
+            << prms.x_subdivisions << " " << prms.y_subdivisions << " "
+            << prms.z_subdivisions << " " << prms.fe_degree << " " << prms.E
+            << " " << prms.nu << " " << present_energy << " "
             << spatial_force[0].norm() << " " << spatial_force[1].norm() << " "
             << spatial_normal_force[0].norm() << " "
             << spatial_normal_force[1].norm() << " "

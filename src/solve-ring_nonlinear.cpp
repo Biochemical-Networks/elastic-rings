@@ -806,10 +806,10 @@ void SolveRing<dim>::refine_mesh() {
     present_solution.reinit(dof_handler.n_dofs());
     newton_update.reinit(dof_handler.n_dofs());
     system_rhs.reinit(dof_handler.n_dofs());
-    setup_constraints();
-    setup_sparsity_pattern();
     present_solution = interpolated_solution;
     initial_stage_solution = present_solution;
+    setup_constraints();
+    setup_sparsity_pattern();
 }
 
 template <int dim>

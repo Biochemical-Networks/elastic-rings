@@ -797,18 +797,18 @@ void SolveRing<dim>::refine_mesh() {
     Vector<double> interpolated_solution(dof_handler.n_dofs());
     soltrans.refine_interpolate(present_solution, interpolated_solution);
 
+    dofs_to_supports.resize(dof_handler.n_dofs());
+    DoFTools::map_dofs_to_support_points<dim, dim>(
+            MappingQGeneric<dim>(prms.fe_degree),
+            dof_handler,
+            dofs_to_supports);
+
     present_solution.reinit(dof_handler.n_dofs());
     newton_update.reinit(dof_handler.n_dofs());
     system_rhs.reinit(dof_handler.n_dofs());
     setup_constraints();
     setup_sparsity_pattern();
     present_solution = interpolated_solution;
-
-    dofs_to_supports.resize(dof_handler.n_dofs());
-    DoFTools::map_dofs_to_support_points<dim, dim>(
-            MappingQGeneric<dim>(prms.fe_degree),
-            dof_handler,
-            dofs_to_supports);
 }
 
 template <int dim>

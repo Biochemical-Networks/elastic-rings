@@ -809,6 +809,7 @@ void SolveRing<dim>::refine_mesh() {
     setup_constraints();
     setup_sparsity_pattern();
     present_solution = interpolated_solution;
+    initial_stage_solution = present_solution;
 }
 
 template <int dim>

@@ -21,6 +21,7 @@ struct Params {
     unsigned int final_refinements;
     unsigned int starting_refinement;
     std::string refine_direction;
+    std::string mesh_type;
     double beam_X;
     double beam_Y;
     double beam_Z;
@@ -125,6 +126,11 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "",
                 Patterns::Anything(),
                 "Refinement direction (x, yz, or nothing for isotropic)");
+        prm.declare_entry(
+                "Mesh type",
+                "beam",
+                Patterns::Anything(),
+                "Mesh generator (beam or cylinder)");
         prm.declare_entry(
                 "Beam X", "100", Patterns::Double(0), "Length of beam");
         prm.declare_entry("Beam Y", "1", Patterns::Double(0), "Height of beam");
@@ -362,6 +368,7 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         final_refinements = prm.get_integer("Number of final refinements");
         starting_refinement = prm.get_integer("Starting refinement level");
         refine_direction = prm.get("Refinement direction");
+        mesh_type = prm.get("Mesh type");
         beam_X = prm.get_double("Beam X");
         beam_Y = prm.get_double("Beam Y");
         beam_Z = prm.get_double("Beam Z");

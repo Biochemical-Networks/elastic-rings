@@ -273,11 +273,18 @@ void SolveRing<dim>::run() {
 template <int dim>
 void SolveRing<dim>::make_mesh() {
     const Point<dim>& origin {0, 0, 0};
+
+    // maybe put these in the if statement
     const Point<dim>& size {prms.beam_X, prms.beam_Y, prms.beam_Z};
     const std::vector<unsigned int> subdivisions {
             prms.x_subdivisions, prms.y_subdivisions, prms.z_subdivisions};
-    GridGenerator::subdivided_hyper_rectangle(
-            triangulation, subdivisions, origin, size);
+    if (prms.mesh_type == "beam") {
+        GridGenerator::subdivided_hyper_rectangle(
+                triangulation, subdivisions, origin, size);
+    }
+    else if (prms.mesh_type == "cylinder") {
+        GridGenerator::cylinder(triangulation, prms.beam_Y, prms.beam_X);
+    }
 
     for (auto& face: triangulation.active_face_iterators()) {
         for (unsigned int i {0}; i != prms.num_boundary_domains; i++) {

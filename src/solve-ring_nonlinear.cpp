@@ -257,7 +257,7 @@ void SolveRing<dim>::run() {
         std::string gamma_formatted {format_gamma()};
 
         // Add gamma to keept the checkpoint naming consistent
-        checkpoint = std::to_string(stage_i) + "-" + std::to_string(i) +
+        checkpoint = std::to_string(stage_i) + "-" + std::to_string(i) + "-" +
                      gamma_formatted;
         refine_mesh();
         newton_iteration(first_step, checkpoint);
@@ -803,6 +803,12 @@ void SolveRing<dim>::refine_mesh() {
     setup_constraints();
     setup_sparsity_pattern();
     present_solution = interpolated_solution;
+
+    dofs_to_supports.resize(dof_handler.n_dofs());
+    DoFTools::map_dofs_to_support_points<dim, dim>(
+            MappingQGeneric<dim>(prms.fe_degree),
+            dof_handler,
+            dofs_to_supports);
 }
 
 template <int dim>

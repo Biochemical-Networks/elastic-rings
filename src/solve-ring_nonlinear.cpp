@@ -254,7 +254,11 @@ void SolveRing<dim>::run() {
          i++) {
 
         std::cout << "Grid refinement " << std::to_string(i) << std::endl;
-        checkpoint = std::to_string(stage_i) + "-" + std::to_string(i);
+        std::string gamma_formatted {format_gamma()};
+
+        // Add gamma to keept the checkpoint naming consistent
+        checkpoint = std::to_string(stage_i) + "-" + std::to_string(i) +
+                     gamma_formatted;
         refine_mesh();
         newton_iteration(first_step, checkpoint);
         output_checkpoint(checkpoint);

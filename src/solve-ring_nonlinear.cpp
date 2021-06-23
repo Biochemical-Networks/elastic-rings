@@ -1002,10 +1002,11 @@ void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     data_out_faces.attach_dof_handler(dof_handler);
     FacesPostprocessor<dim> faces_postprocessor {lambda, mu};
     data_out_faces.add_data_vector(present_solution, faces_postprocessor);
+
     DataOutBase::VtkFlags flags;
     flags.write_higher_order_cells = true;
     data_out_faces.set_flags(flags);
-    MappingQGeneric<dim> mapping {prms.fe_degree};
+    MappingQGeneric<dim> mapping {prms.fe_degree + 1};
     data_out_faces.build_patches(mapping, fe.degree);
 
     std::ofstream data_output_faces(

@@ -279,9 +279,9 @@ void SolveRing<dim>::make_mesh() {
                 triangulation,
                 prms.x_subdivisions,
                 prms.cylinder_radius,
-                prms.cylinder_length/2);
+                prms.cylinder_length / 2);
         Tensor<1, dim> shift_vector;
-        shift_vector[0] = prms.cylinder_length/2;
+        shift_vector[0] = prms.cylinder_length / 2;
         GridTools::shift(shift_vector, triangulation);
     }
 
@@ -1002,6 +1002,12 @@ void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     data_out_faces.attach_dof_handler(dof_handler);
     FacesPostprocessor<dim> faces_postprocessor {lambda, mu};
     data_out_faces.add_data_vector(present_solution, faces_postprocessor);
+
+    Vector<double> material_ids(triangulation.n_active_cells());
+    for (const auto& cell: triangulation.active_cell_iterators()) {
+        material_ids[cell->active_cell_index()] = cell->material_id();
+    }
+    data_out_faces.add_data_vector(material_ids, "material_ids");
 
     DataOutBase::VtkFlags flags;
     flags.write_higher_order_cells = true;

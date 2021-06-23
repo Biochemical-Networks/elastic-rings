@@ -1000,8 +1000,8 @@ void SolveRing<dim>::print_forces() {
 template <int dim>
 void SolveRing<dim>::output_grid() const {
     GridOut grid_out;
-    std::ofstream grid_output {prms.output_prefix + "_mesh.vtk"};
-    grid_out.write_vtk(triangulation, grid_output);
+    std::ofstream grid_output {prms.output_prefix + "_mesh.vtu"};
+    grid_out.write_vtu(triangulation, grid_output);
 }
 
 template <int dim>
@@ -1031,8 +1031,8 @@ void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     data_out_faces.build_patches();
 
     std::ofstream data_output_faces(
-            prms.output_prefix + "_faces_" + checkpoint + ".vtk");
-    data_out_faces.write_vtk(data_output_faces);
+            prms.output_prefix + "_faces_" + checkpoint + ".vtu");
+    data_out_faces.write_vtu(data_output_faces);
 }
 
 template <int dim>
@@ -1080,8 +1080,8 @@ void SolveRing<dim>::output_moved_mesh_results(
     data_out_faces.build_patches();
 
     std::ofstream data_output_faces(
-            prms.output_prefix + "_faces-moved-mesh_" + checkpoint + ".vtk");
-    data_out_faces.write_vtk(data_output_faces);
+            prms.output_prefix + "_faces-moved-mesh_" + checkpoint + ".vtu");
+    data_out_faces.write_vtu(data_output_faces);
 }
 
 template <int dim>

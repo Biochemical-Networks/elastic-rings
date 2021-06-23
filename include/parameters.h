@@ -25,6 +25,8 @@ struct Params {
     double beam_X;
     double beam_Y;
     double beam_Z;
+    double cylinder_radius;
+    double cylinder_length;
     unsigned int x_subdivisions;
     unsigned int y_subdivisions;
     unsigned int z_subdivisions;
@@ -136,6 +138,16 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
         prm.declare_entry("Beam Y", "1", Patterns::Double(0), "Height of beam");
         prm.declare_entry("Beam Z", "1", Patterns::Double(0), "Width of beam");
         prm.declare_entry(
+                "Cylinder radius",
+                "100",
+                Patterns::Double(0),
+                "Radius of cylinder");
+        prm.declare_entry(
+                "Cylinder length",
+                "100",
+                Patterns::Double(0),
+                "Length of cylinder");
+        prm.declare_entry(
                 "x subdivisions",
                 "1",
                 Patterns::Integer(1),
@@ -151,10 +163,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 Patterns::Integer(1),
                 "Number of subdivisions along z");
         prm.declare_entry(
-                "FE degree",
-                "1",
-                Patterns::Integer(1),
-                "FE degree (1 or 2)");
+                "FE degree", "1", Patterns::Integer(1), "FE degree (1 or 2)");
         prm.declare_entry(
                 "Centering",
                 "None",
@@ -231,7 +240,10 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                     Patterns::Integer(0),
                     "Constrained domain");
             prm.declare_entry(
-                    "Anchor domain", "0", Patterns::Integer(0), "Anchor domain");
+                    "Anchor domain",
+                    "0",
+                    Patterns::Integer(0),
+                    "Anchor domain");
         }
         prm.leave_subsection();
     }

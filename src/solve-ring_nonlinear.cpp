@@ -132,14 +132,12 @@ class SolveRing {
     void center_solution_on_mean();
     void center_solution_on_vertex();
     void refine_mesh();
-    void move_mesh();
     void integrate_over_boundaries();
     void calc_shear_and_normal_forces();
     void print_forces();
     void output_checkpoint(const std::string checkpoint) const;
     void output_dof_results(const std::string checkpoint) const;
     void output_integrated_results(const std::string checkpoint) const;
-    void output_moved_mesh_results(const std::string checkpoint) const;
     void load_checkpoint(const std::string checkpoint);
     void set_ring_configuration();
     std::string format_gamma();
@@ -262,10 +260,6 @@ void SolveRing<dim>::run() {
         output_checkpoint(checkpoint);
         integrate_over_boundaries();
     }
-
-    // checkpoint = "moved-mesh";
-    // move_mesh();
-    // output_moved_mesh_results(checkpoint);
 }
 
 template <int dim>
@@ -818,24 +812,6 @@ void SolveRing<dim>::refine_mesh() {
 }
 
 template <int dim>
-void SolveRing<dim>::move_mesh() {
-    std::vector<bool> vertex_touched(triangulation.n_vertices(), false);
-    for (auto& cell: dof_handler.active_cell_iterators()) {
-        for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell;
-             ++v) {
-            if (vertex_touched[cell->vertex_index(v)] == false) {
-                vertex_touched[cell->vertex_index(v)] = true;
-                Point<dim> vertex_displacement;
-                for (unsigned int d = 0; d < dim; ++d)
-                    vertex_displacement[d] =
-                            present_solution(cell->vertex_dof_index(v, d));
-                cell->vertex(v) += vertex_displacement;
-            }
-        }
-    }
-}
-
-template <int dim>
 void SolveRing<dim>::integrate_over_boundaries() {
     QGauss<dim - 1> quadrature_formula(fe.degree + 1);
     FEFaceValues<dim> fe_face_values(
@@ -1068,27 +1044,6 @@ void SolveRing<dim>::output_integrated_results(
             << spatial_shear_force[0].norm() << " "
             << spatial_shear_force[1].norm() << std::endl;
     outfile.close();
-}
-
-template <int dim>
-void SolveRing<dim>::output_moved_mesh_results(
-        const std::string checkpoint) const {
-
-    SpatialStressVectorMovedMeshPostprocess<dim> postprocessor {lambda, mu};
-
-    DataOutFaces<dim> data_out_faces;
-    data_out_faces.attach_dof_handler(dof_handler);
-    data_out_faces.add_data_vector(present_solution, postprocessor);
-    DataOutBase::VtkFlags flags;
-    flags.write_higher_order_cells = true;
-    data_out_faces.set_flags(flags);
-    MappingQGeneric<dim> mapping {prms.fe_degree};
-    data_out_faces.build_patches(mapping, fe.degree);
-    data_out_faces.build_patches();
-
-    std::ofstream data_output_faces(
-            prms.output_prefix + "_faces-moved-mesh_" + checkpoint + ".vtu");
-    data_out_faces.write_vtu(data_output_faces);
 }
 
 template <int dim>

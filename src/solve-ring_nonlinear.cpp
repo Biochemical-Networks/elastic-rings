@@ -136,7 +136,6 @@ class SolveRing {
     void integrate_over_boundaries();
     void calc_shear_and_normal_forces();
     void print_forces();
-    void output_grid() const;
     void output_checkpoint(const std::string checkpoint) const;
     void output_dof_results(const std::string checkpoint) const;
     void output_integrated_results(const std::string checkpoint) const;
@@ -211,7 +210,6 @@ SolveRing<dim>::SolveRing(Params<dim>& prms):
 template <int dim>
 void SolveRing<dim>::run() {
     make_mesh();
-    output_grid();
     std::string checkpoint;
     bool first_step {true};
     if (prms.load_from_checkpoint) {
@@ -1002,13 +1000,6 @@ void SolveRing<dim>::print_forces() {
     std::cout << "Right boundary spatial shear force: "
               << spatial_shear_force[1].norm() << std::endl;
     std::cout << std::endl;
-}
-
-template <int dim>
-void SolveRing<dim>::output_grid() const {
-    GridOut grid_out;
-    std::ofstream grid_output {prms.output_prefix + "_mesh.vtu"};
-    grid_out.write_vtu(triangulation, grid_output);
 }
 
 template <int dim>

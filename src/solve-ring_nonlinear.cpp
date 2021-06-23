@@ -283,7 +283,14 @@ void SolveRing<dim>::make_mesh() {
                 triangulation, subdivisions, origin, size);
     }
     else if (prms.mesh_type == "cylinder") {
-        GridGenerator::cylinder(triangulation, prms.beam_Y, prms.beam_X);
+        GridGenerator::subdivided_cylinder(
+                triangulation,
+                prms.x_subdivisions,
+                prms.cylinder_radius,
+                prms.cylinder_length/2);
+        Tensor<1, dim> shift_vector;
+        shift_vector[0] = prms.cylinder_length/2;
+        GridTools::shift(shift_vector, triangulation);
     }
 
     for (auto& face: triangulation.active_face_iterators()) {

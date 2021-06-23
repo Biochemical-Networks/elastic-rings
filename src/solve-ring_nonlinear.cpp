@@ -1001,6 +1001,7 @@ template <int dim>
 void SolveRing<dim>::output_grid() const {
     GridOut grid_out;
     std::ofstream grid_output {prms.output_prefix + "_mesh.vtu"};
+    const MappingQ1<dim> mapping;
     grid_out.write_vtu(triangulation, grid_output);
 }
 
@@ -1028,7 +1029,11 @@ void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     data_out_faces.attach_dof_handler(dof_handler);
     FacesPostprocessor<dim> faces_postprocessor {lambda, mu};
     data_out_faces.add_data_vector(present_solution, faces_postprocessor);
-    data_out_faces.build_patches();
+    DataOutBase::VtkFlags flags;
+    flags.write_higher_order_cells = true;
+    data_out_faces.set_flags(flags);
+    const MappingQ1<dim> mapping;
+    data_out_faces.build_patches(mapping, fe.degree);
 
     std::ofstream data_output_faces(
             prms.output_prefix + "_faces_" + checkpoint + ".vtu");
@@ -1077,6 +1082,11 @@ void SolveRing<dim>::output_moved_mesh_results(
     DataOutFaces<dim> data_out_faces;
     data_out_faces.attach_dof_handler(dof_handler);
     data_out_faces.add_data_vector(present_solution, postprocessor);
+    DataOutBase::VtkFlags flags;
+    flags.write_higher_order_cells = true;
+    data_out_faces.set_flags(flags);
+    const MappingQ1<dim> mapping;
+    data_out_faces.build_patches(mapping, fe.degree);
     data_out_faces.build_patches();
 
     std::ofstream data_output_faces(

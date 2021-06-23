@@ -384,6 +384,8 @@ void Params<dim>::parse_parameters(ParameterHandler& prm) {
         beam_X = prm.get_double("Beam X");
         beam_Y = prm.get_double("Beam Y");
         beam_Z = prm.get_double("Beam Z");
+        cylinder_radius = prm.get_double("Cylinder radius");
+        cylinder_length = prm.get_double("Cylinder length");
         x_subdivisions = prm.get_integer("x subdivisions");
         y_subdivisions = prm.get_integer("y subdivisions");
         z_subdivisions = prm.get_integer("z subdivisions");

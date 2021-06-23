@@ -1031,7 +1031,7 @@ void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     DataOutBase::VtkFlags flags;
     flags.write_higher_order_cells = true;
     data_out_faces.set_flags(flags);
-    MappingQGeneric<dim>(prms.fe_degree);
+    MappingQGeneric<dim> mapping {prms.fe_degree};
     data_out_faces.build_patches(mapping, fe.degree);
 
     std::ofstream data_output_faces(
@@ -1084,7 +1084,7 @@ void SolveRing<dim>::output_moved_mesh_results(
     DataOutBase::VtkFlags flags;
     flags.write_higher_order_cells = true;
     data_out_faces.set_flags(flags);
-    MappingQGeneric<dim>(prms.fe_degree);
+    MappingQGeneric<dim> mapping {prms.fe_degree};
     data_out_faces.build_patches(mapping, fe.degree);
     data_out_faces.build_patches();
 
@@ -1116,7 +1116,7 @@ void SolveRing<dim>::load_checkpoint(const std::string checkpoint) {
     system_rhs.reinit(dof_handler.n_dofs());
 
     // Get material coordinates for easy access
-    MappingQGeneric<dim>(prms.fe_degree);
+    MappingQGeneric<dim> mapping {prms.fe_degree};
     dofs_to_supports.resize(dof_handler.n_dofs());
     DoFTools::map_dofs_to_support_points<dim, dim>(
             mapping, dof_handler, dofs_to_supports);

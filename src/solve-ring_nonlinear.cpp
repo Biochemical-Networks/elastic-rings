@@ -1003,12 +1003,6 @@ void SolveRing<dim>::output_dof_results(const std::string checkpoint) const {
     FacesPostprocessor<dim> faces_postprocessor {lambda, mu};
     data_out_faces.add_data_vector(present_solution, faces_postprocessor);
 
-    Vector<double> boundary_ids(triangulation.n_active_cells());
-    for (const auto& cell: triangulation.active_cell_iterators()) {
-        boundary_ids[cell->active_cell_index()] = cell->boundary_id();
-    }
-    data_out_faces.add_data_vector(boundary_ids, "boundary_ids");
-
     DataOutBase::VtkFlags flags;
     flags.write_higher_order_cells = true;
     data_out_faces.set_flags(flags);

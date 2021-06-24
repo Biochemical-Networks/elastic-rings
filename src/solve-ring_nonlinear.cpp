@@ -1094,11 +1094,11 @@ void SolveRing<dim>::set_ring_configuration() {
             double X {dof_support[0]};
             double Y {dof_support[1]};
             if (prms.mesh_type == "cylinder") {
-                X += prms.cylinder_length/2;
+                X += prms.cylinder_length / 2;
                 Y += prms.cylinder_radius;
             }
             if (component_index == 0) {
-                double x_neutral {x_neutral = radius * sin(X / radius)};
+                double x_neutral {radius * sin(X / radius)};
                 double x_beam {(Y - prms.beam_Y / 2) * sin(X / radius)};
                 double x {x_neutral + x_beam};
                 present_solution[cell_dof] = x - X;

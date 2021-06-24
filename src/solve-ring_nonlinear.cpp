@@ -259,6 +259,8 @@ void SolveRing<dim>::run() {
         newton_iteration(first_step, checkpoint);
         output_checkpoint(checkpoint);
         integrate_over_boundaries();
+        output_integrated_results(checkpoint);
+        print_forces();
     }
 }
 

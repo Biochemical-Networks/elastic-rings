@@ -1078,12 +1078,15 @@ void SolveRing<dim>::set_ring_configuration() {
     present_solution.reinit(dof_handler.n_dofs());
     const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
     std::vector<types::global_dof_index> cell_dofs(dofs_per_cell);
-    double radius;
+    double radius {0};
+    double half_height {0};
     if (prms.mesh_type == "beam") {
         radius = prms.beam_X / (2 * numbers::PI);
+        half_height = prms.beam_Y/2;
     }
     else if (prms.mesh_type == "cylinder") {
         radius = prms.cylinder_length / (2 * numbers::PI);
+        half_height = prms.cylinder_radius;
     }
     for (auto& cell: dof_handler.active_cell_iterators()) {
         cell->get_dof_indices(cell_dofs);
@@ -1099,14 +1102,14 @@ void SolveRing<dim>::set_ring_configuration() {
             }
             if (component_index == 0) {
                 double x_neutral {radius * sin(X / radius)};
-                double x_beam {(Y - prms.beam_Y / 2) * sin(X / radius)};
+                double x_beam {(Y - half_height / 2) * sin(X / radius)};
                 double x {x_neutral + x_beam};
                 present_solution[cell_dof] = x - X;
             }
             else if (component_index == 1) {
                 double y_neutral {radius * cos(X / radius)};
-                double y_beam {(Y - prms.beam_Y / 2) * cos(X / radius)};
-                double y {y_neutral + y_beam - radius + prms.beam_Y / 2};
+                double y_beam {(Y - half_height) * cos(X / radius)};
+                double y {y_neutral + y_beam - radius + half_height};
                 present_solution[cell_dof] = y - Y;
             }
         }

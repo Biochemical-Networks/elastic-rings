@@ -1078,7 +1078,13 @@ void SolveRing<dim>::set_ring_configuration() {
     present_solution.reinit(dof_handler.n_dofs());
     const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
     std::vector<types::global_dof_index> cell_dofs(dofs_per_cell);
-    double radius {prms.beam_X / (2 * numbers::PI)};
+    double radius;
+    if (prms.mesh_type == "beam") {
+        radius = prms.beam_X / (2 * numbers::PI);
+    }
+    else if (prms.mesh_type == "cylinder") {
+        radius = prms.cylinder_length / (2 * numbers::PI);
+    }
     for (auto& cell: dof_handler.active_cell_iterators()) {
         cell->get_dof_indices(cell_dofs);
         for (unsigned int i {0}; i != dofs_per_cell; ++i) {
@@ -1087,8 +1093,12 @@ void SolveRing<dim>::set_ring_configuration() {
             Point<dim> dof_support {dofs_to_supports[cell_dof]};
             double X {dof_support[0]};
             double Y {dof_support[1]};
+            if (prms.mesh_type == "cylinder") {
+                X += prms.cylinder_length/2;
+                Y += prms.cylinder_radius;
+            }
             if (component_index == 0) {
-                double x_neutral {radius * sin(X / radius)};
+                double x_neutral {x_neutral = radius * sin(X / radius)};
                 double x_beam {(Y - prms.beam_Y / 2) * sin(X / radius)};
                 double x {x_neutral + x_beam};
                 present_solution[cell_dof] = x - X;

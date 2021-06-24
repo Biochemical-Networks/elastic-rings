@@ -280,11 +280,6 @@ void SolveRing<dim>::make_mesh() {
                 prms.x_subdivisions,
                 prms.cylinder_radius,
                 prms.cylinder_length / 2);
-        Tensor<1, dim> shift_vector;
-        shift_vector[0] = prms.cylinder_length / 2;
-        shift_vector[1] = prms.cylinder_radius;
-        shift_vector[2] = prms.cylinder_radius;
-        GridTools::shift(shift_vector, triangulation);
     }
 
     for (auto& face: triangulation.active_face_iterators()) {

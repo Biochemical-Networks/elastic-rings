@@ -291,6 +291,7 @@ void SolveRing<dim>::make_mesh() {
             }
         }
     }
+    triangulation.refine_global(prms.initial_refinements);
 }
 
 template <int dim>
@@ -1084,7 +1085,7 @@ void SolveRing<dim>::set_ring_configuration() {
     double half_height {0};
     if (prms.mesh_type == "beam") {
         radius = prms.beam_X / (2 * numbers::PI);
-        half_height = prms.beam_Y/2;
+        half_height = prms.beam_Y / 2;
     }
     else if (prms.mesh_type == "cylinder") {
         radius = prms.cylinder_length / (2 * numbers::PI);

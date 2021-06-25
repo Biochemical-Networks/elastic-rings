@@ -51,6 +51,7 @@
 #include <deal.II/numerics/solution_transfer.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include "subdivided_cylinder.h"
 #include "parameters.h"
 #include "postprocessing.h"
 
@@ -277,7 +278,7 @@ void SolveRing<dim>::make_mesh() {
                 triangulation, subdivisions, origin, size);
     }
     else if (prms.mesh_type == "cylinder") {
-        GridGenerator::subdivided_cylinder(
+        SubdividedCylinder::subdivided_cylinder(
                 triangulation,
                 prms.x_subdivisions,
                 prms.cylinder_radius,

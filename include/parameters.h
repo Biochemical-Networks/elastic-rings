@@ -39,8 +39,9 @@ struct Params {
     unsigned int num_boundary_stages;
     unsigned int num_boundary_conditions;
     unsigned int starting_stage;
-    static const unsigned int max_stages {5};
-    static const unsigned int max_conditions {2};
+    static const unsigned int max_stages {10};
+    static const unsigned int max_conditions {10};
+    static const unsigned int max_domains {10};
 
     // Bounday domain definition
     std::vector<double> min_X {};
@@ -202,7 +203,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
     }
     prm.leave_subsection();
 
-    for (unsigned int i {0}; i != max_conditions + 1; i++) {
+    for (unsigned int i {0}; i != max_domains + 1; i++) {
         prm.enter_subsection("Boundary domain " + std::to_string(i));
         {
             prm.declare_entry(

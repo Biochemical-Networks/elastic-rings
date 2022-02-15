@@ -1149,7 +1149,7 @@ int main(int argc, char* argv[]) {
                 Params<3> prms {};
                 prms.prm.print_parameters(
                         std::cout,
-                        ParameterHandler::OutputStyle::KeepDeclarationOrder);
+                        ParameterHandler::OutputStyle::KeepDeclarationOrder:PRM);
                 return EXIT_SUCCESS;
             }
             else {

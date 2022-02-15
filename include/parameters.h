@@ -122,12 +122,12 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Number of initial refinements",
                 "2",
                 Patterns::Integer(0),
-                "Number of mesh before solving");
+                "Number of refinement to perform before solving");
         prm.declare_entry(
                 "Number of final refinements",
                 "0",
                 Patterns::Integer(0),
-                "Number of refinements after solving");
+                "Number of refinements to perform after solving");
         prm.declare_entry(
                 "Starting refinement level",
                 "0",

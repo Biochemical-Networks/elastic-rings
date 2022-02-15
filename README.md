@@ -31,35 +31,62 @@ To build the program starting from the main directory of the repository, run
 ```
 mkdir build
 cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=[desired install location]
 ```
-options debug, install dir, etc
-
+The option `CMAKE_BUILD_TYPE` can also be set to `Debug`.
+The deal.II library location should be detected by cmake, but if not, it can be specified with the `deal.II_DIR` option.
 
 ## Running a calculation
 
 To run a calculation, a configuration file is required.
+Two example configuration files are provided in the `examples` directory.
+One, `beam.conf` takes a long beam lying along the X-axis and applies a Dirichlet boundary condition such that one end is shifted up in the Y-axis, but without changing the angle of that face.
+The other, `ring.conf`, also starts with a beam, but applies pair constraints to glue the ends of the beam together to form a ring (it does so by making a very good initial guess of the initial solution).
+To run the calculation with the configuration file called `beam.conf`, run
+```
+solve-ring-nonlinear examples/beam.conf
+```
+
 The configuration file format is defined by the deal.II class [ParameterHandler](https://www.dealii.org/current/doxygen/deal.II/classParameterHandler.html).
 The format is, for the most part, key value pairs delimited by an equals sign, where these pairs may be organized into subsections.
 A subsection line is preceded by `subsection`, while a key value pair line is preceded by `set`.
-
 To see a description of all subsections and keys, along with any default values, run
 ```
 solve-ring-nonlinear -h
 ```
-To run a simulation with a configuration file called `test.conf`, run
-```
-solve-ring-nonlinear test.conf
-```
 
-Two example configuration files are provided in the `examples` directory.
-give a brief description
+Three of the subsections can have multiple version.
+These are `Boundary domain`, `Boundary condition`, and `Boundary stage`.
+They are indexed from 0, and up to 10 can be defined (the code can be easily be modified to allow for more).
+The boundary conditions reference the boundary domains, and specify the type of boundary condition to be applied to the domains.
+For a Dirichlet boundary condition, only `Associated domain` must be set to the domain index it will be applied to.
+For a pair constraint condition, both `Anchor domain` and `Constrained domain` must be set.
+For each boundary stage, a subsection for all defined boundary conditions must be defined, with the function (either constants for the Dirichlet condition, or a linear equation for the pair constraint).
+For the pair constraint function defined in a boundary stage, the x variable is the constrained boundary minus the anchor boundary, where the position vectors of the boundary are in the material reference.
+The y and z variables are the material position vectors of the anchor domain.
+Currently if a pair constraint is used, no other boundary conditions can be used (or at least it must be index 0 and only Dirichlet conditions follow; extending this would not be difficult).
+At least two stages must be defined, as the general idea is to take steps from one stage to another.
+For stages other than 0, the number of increments should be set.
+
+In addition to data for analysis, the program will also output archive files that can be read back in to restart the simulation after some number of increments, stages, and refinements.
+The checkpoint format is to append `_[stage index]-[refinement index]-[gamma]` to the given output filename prefix.
+To run a restart calculation, `Starting refinement`, `Input checkpoint`, and `Starting stage` should be specified.
+The program will not however, know how many increments have already been run.
 
 ## Analysis and visualization
 
+The program will integrated values of the traction forces on the boundaries (currently assuming that boundary 0 and boundary 1 correspond to left and right, respectively) to standard out when it has completed.
+These are also printed to a file `[Output filename prefix]_integrated_[checkpoint].dat`.
+See above section for checkpoint formatting.
+The displacement vector field, material and spatial normal vector field, and the material and spatial stress vector field is also output in vtu format as `[Output filename prefix]_faces_[checkpoint].vtu`, which is viewable with [Paraview](https://www.paraview.org/).
+In Paraview, apply the "Warp by Vector" filter to the displacement vectors to see the deformed object, and the "Glyph" filter to the stress vectors (either to the undeformed object for the material stress vector or the deformed object for the spatial stress vector) to see the stress .
+The norm of the gradient of the displacement vector field is also included (a scalar field), which can be used to determine whether and where a linear assumption to the strain is valid (i.e. where the magnitude of the strain is much less than 1) by viewing it with a colour map.
+
 ## References
 
-[deal.II main page]()
+[deal.II main page](https://www.dealii.org/)
+
+[Paraview main page](https://www.paraview.org/)
 
 Some textbooks and material to understand continuum mechanics, elasticity, and FEM:
 
@@ -74,5 +101,3 @@ Some textbooks and material to understand continuum mechanics, elasticity, and F
 [Introduction to Numerical Methods for Variational Problems, Hans Petter Langtangen, Kent-Andre Mardal](https://github.com/hplgit/fem-book), free
 
 [Variational Methods with Applications in Science and Engineering, Kevin W. Cassel](https://www.cambridge.org/nl/academic/subjects/engineering/engineering-mathematics-and-programming/variational-methods-applications-science-and-engineering?format=HB), not free
-
-

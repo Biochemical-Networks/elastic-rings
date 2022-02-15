@@ -1,0 +1,91 @@
+subsection Mesh and geometry
+    set Number of initial refinements = 0
+    set Number of final refinements = 0
+    set Starting refinement level = 0
+    set Beam X = 100
+    set Beam Y = 2
+    set Beam Z = 1
+    set x subdivisions = 400
+    set y subdivisions = 2
+    set z subdivisions = 1
+    set FE degree = 2
+    set Centering = none
+end
+
+subsection Boundary conditions
+    set Number of boundary domains = 2
+    set Number of boundary stages = 1
+    set Number of boundary conditions = 2
+    set Starting stage = 1
+end
+
+subsection Boundary domain 0
+    set X min = 0
+    set X max = 0
+    set Y min = 0
+    set Y max = 2
+    set Z min = 0
+    set Z max = 1
+end
+
+subsection Boundary domain 1
+    set X min = 100
+    set X max = 100
+    set Y min = 0
+    set Y max = 2
+    set Z min = 0
+    set Z max = 1
+end
+
+subsection Boundary condition 0
+    set Boundary type = dirichlet
+    set Associated domain = 0
+end
+
+subsection Boundary condition 1
+    set Boundary type = dirichlet
+    set Associated domain = 1
+end
+
+subsection Boundary function stage 0
+    subsection Boundary condition 0
+        set Function expression = 0; 0; 0
+    end
+    subsection Boundary condition 1
+        set Function expression = 0; 0; 0
+    end
+end
+
+subsection Boundary function stage 1
+    set Number of boundary increments = 1
+    subsection Boundary condition 0
+        set Function expression = 0; 0; 0
+    end
+    subsection Boundary condition 1
+        set Function expression = 0; 1.0; 0
+    end
+end
+
+subsection Physical constants
+    set Young's modulus = 10
+    set Poisson's ratio = 0.0
+end
+
+subsection Solver
+    set Maximum number of line searches = 10
+    set Minimum alpha = 1e-6
+    set Alpha factor = 0.5
+    set Nonlinear tolerance = 1e-6
+    set Linear solver = direct
+    set Maximum number of linear solver iterations = 10000
+    set Linear tolerance = 1e-8
+    set Preconditioner relaxation parameter = 1.0
+end
+
+subsection Input and output
+    set Load from checkpoint = false
+    set Input filename prefix =
+    set Input checkpoint =
+    set Output filename prefix = beam
+    set Gamma precision = 1
+end

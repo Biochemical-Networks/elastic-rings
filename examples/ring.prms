@@ -1,0 +1,83 @@
+subsection Mesh and geometry
+    set Number of initial refinements = 0
+    set Number of final refinements = 0
+    set Starting refinement level = 0
+    set Refinement direction = x
+    set Beam X = 5e-7
+    set Beam Y = 5.6e-9
+    set Beam Z = 5.6e-9
+    set x subdivisions = 1000
+    set y subdivisions = 1
+    set z subdivisions = 1
+    set FE degree = 2
+    set Centering = vertex
+    set Set ring configuration = true
+end
+
+subsection Boundary conditions
+    set Number of boundary domains = 2
+    set Number of boundary stages = 1
+    set Number of boundary conditions = 1
+    set Starting stage = 1
+end
+
+subsection Boundary domain 0
+    set X min = 0
+    set X max = 0
+    set Y min = 0
+    set Y max = 5.6e-9
+    set Z min = 0
+    set Z max = 5.6e-9
+end
+
+subsection Boundary domain 1
+    set X min = 5e-7
+    set X max = 5e-7
+    set Y min = 0
+    set Y max = 5.6e-9
+    set Z min = 0
+    set Z max = 5.6e-9
+end
+
+subsection Boundary condition 0
+    set Boundary type = pair constraint
+    set Anchor domain = 0
+    set Constrained domain = 1
+end
+
+subsection Boundary function stage 0
+    subsection Boundary condition 0
+        set Function expression = 0; 0; 0
+    end
+end
+
+subsection Boundary function stage 1
+    set Number of boundary increments = 1
+    subsection Boundary condition 0
+        set Function expression = -x; 0; 0
+    end
+end
+
+subsection Physical constants
+    set Young's modulus = 1.0e9
+    set Poisson's ratio = 0.0
+end
+
+subsection Solver
+    set Maximum number of line searches = 20
+    set Minimum alpha = 1e-9
+    set Alpha factor = 0.5
+    set Nonlinear tolerance = 1e-14
+    set Linear solver = direct
+    set Maximum number of linear solver iterations = 10000
+    set Linear tolerance = 1e-14
+    set Preconditioner relaxation parameter = 0.1
+end
+
+subsection Input and output
+    set Load from checkpoint = false
+    set Input filename prefix =
+    set Input checkpoint =
+    set Output filename prefix = ring
+    set Gamma precision = 1
+end

@@ -1156,15 +1156,14 @@ int main(int argc, char* argv[]) {
             }
             else {
                 Params<3> prms {static_cast<std::string>(argv[1])};
+                SolveRing<3> ring_solver {prms};
+                ring_solver.run();
             }
         }
         else {
             std::cout << "Only one argument is allowed" << std::endl;
             return EXIT_FAILURE;
         }
-        Params<3> prms {};
-        SolveRing<3> ring_solver {prms};
-        ring_solver.run();
     } catch (const std::exception& exc) {
         std::cerr << std::endl
                   << std::endl

@@ -1,6 +1,8 @@
 #ifndef parameters_h
 #define parameters_h
 
+#include <fstream>
+#include <iostream>
 #include <unordered_map>
 #include <vector>
 
@@ -86,12 +88,19 @@ struct Params {
     unsigned int gamma_precision;
 
     Params();
+    Params(const std::string config_filename);
     static void declare_parameters(ParameterHandler& prm);
     void parse_parameters(ParameterHandler& prm);
+    ParameterHandler prm;
 };
 
 template <int dim>
 Params<dim>::Params() {
+    declare_parameters(prm);
+}
+
+template <int dim>
+Params<dim>::Params(const std::string config_filename) {
     for (unsigned int i {0}; i != max_stages; i++) {
         boundary_functions.push_back({});
         for (unsigned int j {0}; j != max_conditions; j++) {
@@ -99,9 +108,9 @@ Params<dim>::Params() {
                     std::make_shared<Functions::ParsedFunction<dim>>(dim));
         }
     }
-    ParameterHandler prm;
     declare_parameters(prm);
-    prm.parse_input(std::cin);
+    std::ifstream config_file {config_filename};
+    prm.parse_input(config_file);
     parse_parameters(prm);
 }
 
@@ -113,41 +122,46 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Number of initial refinements",
                 "2",
                 Patterns::Integer(0),
-                "Number of initial mesh refinements");
+                "Number of mesh before solving");
         prm.declare_entry(
                 "Number of final refinements",
                 "0",
                 Patterns::Integer(0),
-                "Number of final mesh refinements");
+                "Number of refinements after solving");
         prm.declare_entry(
                 "Starting refinement level",
                 "0",
                 Patterns::Integer(0),
-                "Starting refinement level");
+                "For use if continuing from a previous calculations where some "
+                "refinements were made");
         prm.declare_entry(
                 "Refinement direction",
                 "",
                 Patterns::Anything(),
-                "Refinement direction (x, yz, or nothing for isotropic)");
+                "Axis or axes to refine along (x, yz, or nothing for "
+                "isotropic)");
         prm.declare_entry(
                 "Mesh type",
                 "beam",
                 Patterns::Anything(),
-                "Mesh generator (beam or cylinder)");
+                "Currently only beam has been tested (but cylinder can be "
+                "specified)");
         prm.declare_entry(
-                "Beam X", "100", Patterns::Double(0), "Length of beam");
-        prm.declare_entry("Beam Y", "1", Patterns::Double(0), "Height of beam");
-        prm.declare_entry("Beam Z", "1", Patterns::Double(0), "Width of beam");
+                "Beam X", "100", Patterns::Double(0), "Length of beam / m");
+        prm.declare_entry(
+                "Beam Y", "1", Patterns::Double(0), "Height of beam / m");
+        prm.declare_entry(
+                "Beam Z", "1", Patterns::Double(0), "Width of beam / m");
         prm.declare_entry(
                 "Cylinder radius",
                 "100",
                 Patterns::Double(0),
-                "Radius of cylinder");
+                "Radius of cylinder / m");
         prm.declare_entry(
                 "Cylinder length",
                 "100",
                 Patterns::Double(0),
-                "Length of cylinder");
+                "Length of cylinder / m");
         prm.declare_entry(
                 "x subdivisions",
                 "1",
@@ -169,7 +183,8 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Centering",
                 "None",
                 Patterns::Anything(),
-                "Method to center the solution");
+                "Method to center the solution, required when using only pair "
+                "constraints");
         prm.declare_entry(
                 "Set ring configuration",
                 "false",
@@ -207,17 +222,35 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
         prm.enter_subsection("Boundary domain " + std::to_string(i));
         {
             prm.declare_entry(
-                    "X min", "0", Patterns::Double(), "Minimum X in domain");
+                    "X min",
+                    "0",
+                    Patterns::Double(),
+                    "Minimum X in domain / m");
             prm.declare_entry(
-                    "X max", "0", Patterns::Double(), "Maximum X in domain");
+                    "X max",
+                    "0",
+                    Patterns::Double(),
+                    "Maximum X in domain / m");
             prm.declare_entry(
-                    "Y min", "0", Patterns::Double(), "Minimum Y in domain");
+                    "Y min",
+                    "0",
+                    Patterns::Double(),
+                    "Minimum Y in domain / m");
             prm.declare_entry(
-                    "Y max", "0", Patterns::Double(), "Maximum Y in domain");
+                    "Y max",
+                    "0",
+                    Patterns::Double(),
+                    "Maximum Y in domain / m");
             prm.declare_entry(
-                    "Z min", "0", Patterns::Double(), "Minimum Z in domain");
+                    "Z min",
+                    "0",
+                    Patterns::Double(),
+                    "Minimum Z in domain / m");
             prm.declare_entry(
-                    "Z max", "0", Patterns::Double(), "Maximum Z in domain");
+                    "Z max",
+                    "0",
+                    Patterns::Double(),
+                    "Maximum Z in domain / m");
         }
         prm.leave_subsection();
     }
@@ -229,22 +262,23 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                     "Boundary type",
                     "dirichlet",
                     Patterns::Anything(),
-                    "Type of boundary condition");
+                    "Type of boundary condition (dirichlet or pair "
+                    "constraint)");
             prm.declare_entry(
                     "Associated domain",
                     "0",
                     Patterns::Integer(0),
-                    "Associated domain");
+                    "For use with dirichlet boundary condition");
             prm.declare_entry(
                     "Constrained domain",
                     "0",
                     Patterns::Integer(0),
-                    "Constrained domain");
+                    "The domain that pair constraints will apply to");
             prm.declare_entry(
                     "Anchor domain",
                     "0",
                     Patterns::Integer(0),
-                    "Anchor domain");
+                    "The domain that the pair constraints use as a reference");
         }
         prm.leave_subsection();
     }
@@ -256,7 +290,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                     "Number of boundary increments",
                     "1",
                     Patterns::Integer(1),
-                    "Number of boundary increments");
+                    "The number of steps to increment the boundary");
             for (unsigned int j {0}; j != max_conditions + 1; j++) {
                 prm.enter_subsection("Boundary condition " + std::to_string(j));
                 {
@@ -264,8 +298,8 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                             "Use current configuration",
                             "false",
                             Patterns::Bool(),
-                            "Set the boundary condition to the current "
-                            "configuration");
+                            "Set the initial boundary condition to the current "
+                            "configuration instead of using previous stage");
                     Functions::ParsedFunction<dim>::declare_parameters(
                             prm, dim);
                 }
@@ -281,7 +315,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Young's modulus",
                 "2.2e7",
                 Patterns::Double(0),
-                "Young's modulus");
+                "Young's modulus / N m^-2");
         prm.declare_entry(
                 "Poisson's ratio",
                 "0.3",
@@ -296,7 +330,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Maximum number of line searches",
                 "10",
                 Patterns::Integer(0),
-                "Maximum number of line searches");
+                "Maximum number of line searches for Newton's method");
         prm.declare_entry(
                 "Minimum alpha",
                 "1e-5",
@@ -312,8 +346,7 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "0.5",
                 Patterns::Double(0),
                 "Larger values require bigger residual decrease for "
-                "acceptable "
-                "alpha");
+                "acceptable alpha");
         prm.declare_entry(
                 "Nonlinear tolerance",
                 "1e-12",
@@ -353,12 +386,14 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Input filename prefix",
                 "",
                 Patterns::Anything(),
-                "Prefix of the output filename");
+                "Prefix of the input filename");
         prm.declare_entry(
                 "Input checkpoint",
                 "",
                 Patterns::Anything(),
-                "Checkpoint of the input file");
+                "Checkpoint of the input file, which is the part of the "
+                "checkpoint files written during the calculation that has "
+                "format [stage index]-[refinement index]-[gamma]");
         prm.declare_entry(
                 "Output filename prefix",
                 "",
@@ -368,7 +403,8 @@ void Params<dim>::declare_parameters(ParameterHandler& prm) {
                 "Gamma precision",
                 "1",
                 Patterns::Integer(0),
-                "Number of digits to include in gamma string");
+                "Number of digits to include in gamma string used in writing "
+                "the checkpoint");
     }
     prm.leave_subsection();
 }

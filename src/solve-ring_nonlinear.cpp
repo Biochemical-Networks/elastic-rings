@@ -51,9 +51,9 @@
 #include <deal.II/numerics/solution_transfer.h>
 #include <deal.II/numerics/vector_tools.h>
 
-#include "subdivided_cylinder.h"
 #include "parameters.h"
 #include "postprocessing.h"
+#include "subdivided_cylinder.h"
 
 namespace solve_ring {
 
@@ -253,7 +253,7 @@ void SolveRing<dim>::run() {
         std::cout << "Grid refinement " << std::to_string(i) << std::endl;
         std::string gamma_formatted {format_gamma()};
 
-        // Add gamma to keept the checkpoint naming consistent
+        // Add gamma to keep the checkpoint naming consistent
         checkpoint = std::to_string(stage_i) + "-" + std::to_string(i) + "-" +
                      gamma_formatted;
         refine_mesh();
@@ -1131,15 +1131,58 @@ std::string SolveRing<dim>::format_gamma() {
 }
 } // namespace solve_ring
 
-int main() {
-    using namespace dealii;
-    using namespace parameters;
-    using namespace postprocessing;
-    using namespace solve_ring;
-    deallog.depth_console(0);
-    Params<3> prms {};
-    SolveRing<3> ring_solver {prms};
-    ring_solver.run();
+int main(int argc, char* argv[]) {
+    try {
+        using namespace dealii;
+        using namespace parameters;
+        using namespace postprocessing;
+        using namespace solve_ring;
+        deallog.depth_console(0);
+        if (argc == 1) {
+            std::cout << "No input file provided" << std::endl
+                      << "Pass -h to list all configuration file options"
+                      << std::endl;
+            return EXIT_FAILURE;
+        }
+        else if (argc == 2) {
+            if (static_cast<std::string>(argv[1]) == "-h") {
+                Params<3> prms {};
+                prms.prm.print_parameters(
+                        std::cout, ParameterHandler::OutputStyle::Text);
+            }
+            else {
+                Params<3> prms {static_cast<std::string>(argv[1])};
+            }
+        }
+        else {
+            std::cout << "Only one argument is allowed" << std::endl;
+            return EXIT_FAILURE;
+        }
+        Params<3> prms {};
+        SolveRing<3> ring_solver {prms};
+        ring_solver.run();
+    } catch (const std::exception& exc) {
+        std::cerr << std::endl
+                  << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
+        std::cerr << "Exception on processing: " << std::endl
+                  << exc.what() << std::endl
+                  << "Aborting" << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
+        return EXIT_FAILURE;
+    } catch (...) {
+        std::cerr << std::endl
+                  << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
+        std::cerr << "Unknown exception" << std::endl
+                  << "Aborting" << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
 
-    return 0;
+    return EXIT_SUCCESS;
 }

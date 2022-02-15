@@ -1148,8 +1148,9 @@ int main(int argc, char* argv[]) {
             if (static_cast<std::string>(argv[1]) == "-h") {
                 Params<3> prms {};
                 prms.prm.print_parameters(
-                        std::cout, ParameterHandler::OutputStyle::Text);
-            return EXIT_SUCCESS;
+                        std::cout,
+                        ParameterHandler::OutputStyle::KeepDeclarationOrder);
+                return EXIT_SUCCESS;
             }
             else {
                 Params<3> prms {static_cast<std::string>(argv[1])};

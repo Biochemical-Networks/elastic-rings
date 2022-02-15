@@ -95,7 +95,7 @@ struct Params {
 };
 
 template <int dim>
-Params<dim>::Params(): max_stages {1}, max_conditions {1}, max_domains {1} {
+Params<dim>::Params(): max_stages {0}, max_conditions {0}, max_domains {0} {
     declare_parameters(prm);
 }
 

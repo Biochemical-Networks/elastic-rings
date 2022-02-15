@@ -41,9 +41,9 @@ struct Params {
     unsigned int num_boundary_stages;
     unsigned int num_boundary_conditions;
     unsigned int starting_stage;
-    static const unsigned int max_stages {10};
-    static const unsigned int max_conditions {10};
-    static const unsigned int max_domains {10};
+    const unsigned int max_stages {10};
+    const unsigned int max_conditions {10};
+    const unsigned int max_domains {10};
 
     // Bounday domain definition
     std::vector<double> min_X {};
@@ -100,7 +100,9 @@ Params<dim>::Params() {
 }
 
 template <int dim>
-Params<dim>::Params(const std::string config_filename) {
+Params<dim>::Params(const std::string config_filename):
+        max_stages {1}, max_conditions {1}, max_domains {1} {
+
     for (unsigned int i {0}; i != max_stages; i++) {
         boundary_functions.push_back({});
         for (unsigned int j {0}; j != max_conditions; j++) {

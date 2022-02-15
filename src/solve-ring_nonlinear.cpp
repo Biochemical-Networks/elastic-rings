@@ -1149,6 +1149,7 @@ int main(int argc, char* argv[]) {
                 Params<3> prms {};
                 prms.prm.print_parameters(
                         std::cout, ParameterHandler::OutputStyle::Text);
+            return EXIT_SUCCESS;
             }
             else {
                 Params<3> prms {static_cast<std::string>(argv[1])};

@@ -95,14 +95,12 @@ struct Params {
 };
 
 template <int dim>
-Params<dim>::Params() {
+Params<dim>::Params(): max_stages {1}, max_conditions {1}, max_domains {1} {
     declare_parameters(prm);
 }
 
 template <int dim>
-Params<dim>::Params(const std::string config_filename):
-        max_stages {1}, max_conditions {1}, max_domains {1} {
-
+Params<dim>::Params(const std::string config_filename) {
     for (unsigned int i {0}; i != max_stages; i++) {
         boundary_functions.push_back({});
         for (unsigned int j {0}; j != max_conditions; j++) {

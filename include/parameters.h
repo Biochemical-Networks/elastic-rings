@@ -89,7 +89,7 @@ struct Params {
 
     Params();
     Params(const std::string config_filename);
-    static void declare_parameters(ParameterHandler& prm);
+    void declare_parameters(ParameterHandler& prm);
     void parse_parameters(ParameterHandler& prm);
     ParameterHandler prm;
 };

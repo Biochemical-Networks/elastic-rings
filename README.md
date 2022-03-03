@@ -3,7 +3,7 @@
 A program for solving geometrically non-linear elastic rings with the deal.II finite element method (FEM) library.
 
 This program was written to test whether beam theory was a valid assumption for bending of actin filaments that form rings.
-Results from this program were used in the work presented in x.
+Results from this program were used in the work presented in [Ref. 1](#references).
 However, the code developed is generally applicable to any problem where a geometrically nonlinear model of elasticity is applied to an object with rectangular cuboid geometry with either essential Dirichlet boundary conditions or linear constraints applied to paired boundary faces.
 The code may also be used as a starting point to implement other nonlinear models of elasticity, more complex geometries, or other types of boundary conditions, although it is strongly recommended to also look through the rich library of [tutorials that are provided as part of the deal.II documentation](https://www.dealii.org/current/doxygen/deal.II/Tutorial.html).
 Implementation of other models of elasticity is made relatively easy here by the use of the automatic differentiation capability of the deal.II library, which here calls wrappers for the Trilinos Sacado package.
@@ -83,6 +83,10 @@ In Paraview, apply the "Warp by Vector" filter to the displacement vectors to se
 The norm of the gradient of the displacement vector field is also included (a scalar field), which can be used to determine whether and where a linear assumption to the strain is valid (i.e. where the magnitude of the strain is much less than 1) by viewing it with a colour map.
 
 ## References
+
+[1] A. Cumberworth and P. R. t. Wolde, Constriction of actin rings by passive crosslinkers.
+
+## Links
 
 [deal.II main page](https://www.dealii.org/)
 

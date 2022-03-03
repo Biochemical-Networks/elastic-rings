@@ -92,8 +92,6 @@ The norm of the gradient of the displacement vector field is also included (a sc
 
 [Paraview main page](https://www.paraview.org/)
 
-Some textbooks and material to understand continuum mechanics, elasticity, and FEM:
-
 [Wolfgang Bangerth's online lecture course](https://www.math.colostate.edu/~bangerth/videos.html), highly recommended, he is one of the core deal.II developers, free
 
 [An Introduction to Continuum Mechanics, J.N. Reddy](https://www.cambridge.org/nl/academic/subjects/engineering/solid-mechanics-and-materials/introduction-continuum-mechanics-2nd-edition?format=HB), not free

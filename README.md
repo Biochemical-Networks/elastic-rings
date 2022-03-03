@@ -1,5 +1,7 @@
 # Elastic Rings Solver
 
+[![DOI](https://zenodo.org/badge/365207159.svg)](https://zenodo.org/badge/latestdoi/365207159)
+
 A program for solving geometrically non-linear elastic rings with the deal.II finite element method (FEM) library.
 
 This program was written to test whether beam theory was a valid assumption for bending of actin filaments that form rings.
